@@ -48,6 +48,10 @@ npm run prepare:models
 
 切换“真实摄像头”并授权。资源从本机 `/models`、`/wasm` 加载，没有运行时 CDN。首次下载的哈希记录在 manifest 中，**它不是上游可信签名**。Windows 等终端的模型下载、许可核对和离线验收见 [SETUP](docs/SETUP.md)。
 
+## 单服务本地展示
+
+先在 frontend 中运行 `npm run prepare:models` 和 `npm run build`，再启动／重启上述后端。FastAPI 会同时提供构建后的网页与 API，打开 **http://127.0.0.1:8000**，无需 Vite 开发服务。首次准备完依赖与资产后，运行期可在本机完成；完整断网重启验收仍需执行。
+
 ## 当前代码实现
 
 - React 网页：训练、复盘、饮食记录、项目协作四个视图，响应式布局。

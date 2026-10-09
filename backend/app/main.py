@@ -2,6 +2,7 @@ from pathlib import Path
 from threading import RLock
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from .agents import analyze
 from .schemas import SessionSummary, AcceptProposal, FoodEntry
 from .storage import Storage
@@ -96,3 +97,9 @@ def nutrition(entries: list[FoodEntry]):
               "kcal": round(FOODS[x.food_id][1] * x.grams / 100, 1)} for x in entries]
     return {"items": items, "total_kcal": round(sum(x["kcal"] for x in items), 1),
             "data_status": "illustrative_unverified", "note": "示例数据，尚未完成食品条目及烹饪方式核验，仅供功能演示。"}
+
+
+# Mount last so explicit API and OpenAPI routes retain priority.
+frontend_build = ROOT / "frontend" / "dist"
+if frontend_build.is_dir():
+    app.mount("/", StaticFiles(directory=frontend_build, html=True), name="frontend")

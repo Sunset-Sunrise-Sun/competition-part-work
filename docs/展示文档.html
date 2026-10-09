@@ -224,7 +224,7 @@
 <h2>性能安排</h2>
 <p>渲染与推理解耦；当前前端约每 80ms 请求一次帧，单帧在途，Worker 同步 CPU 推理。不同笔记本实际帧率未知。训练中不调用 LLM；模型解释在组末按需运行。后续考虑 GPU 后端、输入降采样和帧耗时统计，先保留可比较的 CPU 基线。</p>
 <h2>部署形态</h2>
-<p>开发：Vite 5173 代理 API → 127.0.0.1:8000。生产型本地运行：先构建网页，再用 Vite preview 或静态服务加 API 同源代理（本仓库 preview 暂不配置 API 代理，请仍用 dev 模式演示或自行加代理）。最终可封装桌面启动器；本次先提供两终端可复现方式。远程 GPU 模式单独标识数据边界，不算同机端侧。</p></section><section id="doc-2"><h1>里程碑与长期维护</h1>
+<p>开发：Vite 5173 代理 API → 127.0.0.1:8000。单服务本地展示：先准备模型并构建网页，再启动／重启后端，FastAPI 将 frontend/dist 挂载在根路径，API 与网页同源，打开 8000。静态挂载在 API 路由之后，不遮挡 OpenAPI。Vite preview 仅静态预览，不代理 API。最终可封装桌面启动器。远程 GPU 模式单独标识数据边界，不算同机端侧。</p></section><section id="doc-2"><h1>里程碑与长期维护</h1>
 <table>
 <thead>
 <tr>
@@ -655,7 +655,8 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 <li>计划不调整：观察不足（覆盖率 &lt;0.6 或活动 &lt;10s）时保持，查看 trace；阈值是待验证规则。</li>
 <li>重启后不能确认旧报告：待确认状态只在进程内，重新训练，不恢复执行旧提案。</li>
 <li>模型下载被代理阻断：配置所在终端的网络代理；不要把代理凭据写入仓库。</li>
-<li><code>vite preview</code>：构建检查可以使用，API 联调请用 dev 或提供同源反向代理。</li>
+<li>单服务展示：准备模型后 <code>npm run build</code>，重启后端，打开 8000；后端在启动时检查 dist 是否存在。</li>
+<li><code>vite preview</code>：只作静态预览；完整 API 联调请用 dev 或后端单服务。</li>
 </ul>
 <h2>构建展示文档</h2>
 <pre><code class="language-powershell">.\.venv\Scripts\python.exe -m pip install -r scripts/requirements.txt
@@ -850,12 +851,20 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 <td>当前 UI 自动化环境没有可用浏览器；未完成，不宣称视觉或摄像头验收</td>
 </tr>
 <tr>
-<td>GitHub 连接</td>
-<td>SSH 已认证为 yky666；推送与远端 commit 校验待最后记录</td>
+<td>GitHub 同步</td>
+<td>初版 e168964 已推送 main，<code>git ls-remote</code> 与本地 commit 一致；后续单服务与格式化改进一并同步</td>
 </tr>
 <tr>
 <td>本地服务联通</td>
 <td>网页代理 <code>/api/health</code> 返回 ok、deterministic、video_upload=false、cloud_required=false</td>
+</tr>
+<tr>
+<td>API 完整冒烟</td>
+<td>实际运行服务 health → 合成摘要 → 调整提案 → 接受 → 示例食品计算通过，未保存数据</td>
+</tr>
+<tr>
+<td>单服务展示</td>
+<td>FastAPI 8000 同时返回构建网页、模型 manifest 和 API；无需 Vite，真实浏览器交互仍待验证</td>
 </tr>
 </tbody>
 </table>

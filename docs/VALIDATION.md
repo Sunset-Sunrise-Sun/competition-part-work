@@ -15,8 +15,10 @@
 | 依赖审计 | Vitest 升级至 5.0.3 后 `npm audit --audit-level=moderate` 返回 0 项漏洞 |
 | 初次前端测试 | 发现模拟深蹲几何范围不足，已修正回放，不通过的结果未当作真实模型结论 |
 | 浏览器视觉／交互检查 | 当前 UI 自动化环境没有可用浏览器；未完成，不宣称视觉或摄像头验收 |
-| GitHub 连接 | SSH 已认证为 yky666；推送与远端 commit 校验待最后记录 |
+| GitHub 同步 | 初版 e168964 已推送 main，`git ls-remote` 与本地 commit 一致；后续单服务与格式化改进一并同步 |
 | 本地服务联通 | 网页代理 `/api/health` 返回 ok、deterministic、video_upload=false、cloud_required=false |
+| API 完整冒烟 | 实际运行服务 health → 合成摘要 → 调整提案 → 接受 → 示例食品计算通过，未保存数据 |
+| 单服务展示 | FastAPI 8000 同时返回构建网页、模型 manifest 和 API；无需 Vite，真实浏览器交互仍待验证 |
 
 本地服务通过 127.0.0.1 启动供用户后续试用。安装日志或测试输出不包含真实用户健康数据。
 
