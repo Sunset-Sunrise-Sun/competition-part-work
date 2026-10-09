@@ -1,0 +1,101 @@
+# LocalFit Agent · 本地健身教练
+
+面向居家健身新手的开源端侧教练：**动作反馈 → 用户疲劳反馈 → 计划调整 → 用户确认 → 训练复盘**。
+
+参加第四届开放原子大赛 · 2026 开源行业解决方案创新赛 **赛道一**。团队：4–5 人，算法与网页全栈；最终目标设备：普通笔记本＋摄像头；开发可使用 4090，训练可使用 A100。提交截止：2026-10-31 24:00（Asia/Shanghai）。
+
+> 当前是 v0.1.0 可运行框架，不是经过真实人群验证的健康产品。模拟数据、待验证规则、示例食品数据和可选模型均在界面标明。多 Agent 默认采用确定性角色节点；LangGraph 和学习型动作模型列入后续任务。
+
+## 文档入口
+
+| 用途 | 文档 |
+|---|---|
+| 完整分析、比赛、产品与可行性 | [方案分析](docs/方案分析.md) |
+| 演示与交流 | [独立展示文档](docs/展示文档.html)（下载后用浏览器打开，可打印为 PDF） |
+| 架构、Agent 流与状态 | [ARCHITECTURE](docs/ARCHITECTURE.md) |
+| 数据合同与接口 | [API](docs/API.md)；运行后 http://127.0.0.1:8000/docs |
+| 分工与进度 | [TASKS](docs/TASKS.md)、[ROADMAP](docs/ROADMAP.md) |
+| 算法、评测、验收 | [EVALUATION](docs/EVALUATION.md) |
+| 离线、隐私与部署 | [PRIVACY](docs/PRIVACY.md)、[SETUP](docs/SETUP.md) |
+| 许可、参考与决策 | [DEPENDENCIES](docs/DEPENDENCIES.md)、[SOURCES](docs/SOURCES.md)、[ADR](docs/ADR.md) |
+| 本次实际验证 | [VALIDATION](docs/VALIDATION.md) |
+
+## 快速启动（Windows PowerShell）
+
+需要 Node.js 22.12+、Python 3.11+；首次安装需要网络。两终端分别运行。
+
+```powershell
+# 终端一：仓库根目录
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements.lock.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+```powershell
+# 终端二：仓库根目录
+cd frontend
+npm ci
+npm run dev
+```
+
+打开 http://127.0.0.1:5173 。默认“模拟演示”，无需摄像头或模型权重；点击开始、训练十余秒、调整疲劳、结束复盘，查看协作记录并确认下一组目标。
+
+真实摄像头在 `frontend` 中先准备资源：
+
+```powershell
+npm run prepare:models
+```
+
+切换“真实摄像头”并授权。资源从本机 `/models`、`/wasm` 加载，没有运行时 CDN。首次下载的哈希记录在 manifest 中，**它不是上游可信签名**。Windows 等终端的模型下载、许可核对和离线验收见 [SETUP](docs/SETUP.md)。
+
+## 当前代码实现
+
+- React 网页：训练、复盘、饮食记录、项目协作四个视图，响应式布局。
+- 可复现的模拟动作回放；真实摄像头 → Web Worker → MediaPipe 姿态接线。
+- 深蹲与开合跳计数、关键点质量门控、深蹲倾斜提示的规则基线。
+- FastAPI：结构化摘要、规则角色协作、版本检查、计划确认、示例能量计算。
+- 摘要默认仅内存；勾选同意后保存 SQLite；支持导出和删除。
+- 同机 llama.cpp 可选解释接口，超时降级；不允许模型直接修改计划。
+- 单元/API 测试、GitHub CI、Issue 与 PR 模板、任务和维护约定。
+
+## 实现与目标的区别
+
+| 能力 | 状态 |
+|---|---|
+| 模拟计数、规则协作、API、计划确认 | 已实现；见验证记录 |
+| 摄像头姿态与计数 | 已接线；真实动作精度待人群验证 |
+| 自动机位判断、个体校准 | 待实现，当前机位提示＋实验阈值 |
+| MET 消耗 | 演示用假设范围，未映射完整活动表 |
+| 食品计算 | 4 个未核验示例条目，非正式营养库 |
+| 本地 LLM | 可选适配器，真实模型端到端待测 |
+| LangGraph、多模态语音、时序模型 | 规划项 |
+| 表情疲劳、食物照片份量、医疗用途 | 不纳入本次核心范围 |
+
+## 测试
+
+```powershell
+# 根目录
+.\.venv\Scripts\python.exe -m pytest backend/tests -q
+cd frontend
+npm test
+npm run build
+```
+
+## 仓库结构
+
+```text
+backend/app/       数据合同、API、协作基线、存储、本地模型适配器
+backend/tests/     规则与接口约束测试
+frontend/src/      网页、动作引擎、姿态 Worker
+frontend/scripts/  模型准备工具
+docs/              方案、架构、分工、评测、展示文档
+scripts/           文档导出、项目检查工具
+models/            权重准备说明（权重不提交）
+.github/           CI、Issue、PR 模板
+```
+
+## 协作
+
+先认领 [TASKS](docs/TASKS.md) 中的任务，再建立 `feat/<任务编号>-<描述>` 分支，PR 写清变化、验证与剩余限制。没有实名分工前只使用 A–E 角色，不假定具体成员已认领。模型、食品数据、个体规则的更新必须补来源与验证。主分支用于可演示版本；分支保护需仓库管理员在 GitHub 设置。
+
+原创代码采用 [MIT](LICENSE)；第三方组件、模型、数据遵循各自许可。原始会议纪要保留在本地且已忽略，不上传个人训练数据或凭据。

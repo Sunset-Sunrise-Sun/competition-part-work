@@ -1,0 +1,26 @@
+name: 团队任务
+description: 认领任务并对齐完成定义
+title: "[任务 ID] 简短描述"
+body:
+  - type: input
+    id: owner
+    attributes:
+      label: 负责人／建议完成日期
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 问题、范围与依赖
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 完成定义与验证方式
+    validations:
+      required: true
+  - type: textarea
+    id: progress
+    attributes:
+      label: 进度、证据、下一步

@@ -1,0 +1,21 @@
+name: 缺陷或失败案例
+description: 记录复现条件，不上传个人敏感材料
+title: "[Bug] 简短描述"
+body:
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤、期望与实际行为
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 系统／设备／浏览器／commit／模拟或摄像头
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏证据与影响
+      description: 请勿上传原始健康视频或凭据。
