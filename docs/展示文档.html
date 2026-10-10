@@ -1036,6 +1036,7 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 <li>前端 <code>npm test</code>：12 项通过，包括宽高比不变性、浅/深周期分离、起始中途姿态、短遮挡未知、长缺口拒绝。</li>
 <li>后端 <code>python -m pytest backend/tests -q</code>：11 项通过，新增单次证据回传、时序一致性、动作类别和组时长边界校验。</li>
 <li><code>npm run build</code>：TypeScript 和生产构建通过。</li>
+<li>重启本机 8000 服务后，实际 API 冒烟确认单次幅度进入响应与 training_analyst 证据，提案确认及示例饮食仍通过。</li>
 <li>上述为合成输入/接口验证，不代表真实人体准确率。真实摄像头和视觉交互仍待实机验收。</li>
 <li>卡路里公式未改为学习型预测或自动分段；明确记录现有运行时钟可能包含静止/休息的限制。</li>
 </ul></section></main></body></html>
