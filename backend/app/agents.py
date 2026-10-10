@@ -14,8 +14,11 @@ def analyze(summary: SessionSummary) -> dict:
 
     coverage = min(1, summary.observable_seconds / max(summary.active_seconds, 1))
     completion = min(1, summary.reps / summary.target_reps)
+    rom_counts = {status: sum(rep.rom == status for rep in summary.rep_details)
+                  for status in ("within_rule", "below_rule", "unobservable")}
     record("training_analyst", {"reps": summary.reps, "completion": round(completion, 3),
-                               "coverage": round(coverage, 3), "form_events": summary.form_events},
+                               "coverage": round(coverage, 3), "form_events": summary.form_events,
+                               "experimental_rom": rom_counts, "recorded_reps": len(summary.rep_details)},
            "汇总动作证据；识别覆盖率不足时不判断动作质量。")
 
     blocked = summary.discomfort
@@ -30,9 +33,9 @@ def analyze(summary: SessionSummary) -> dict:
         target = max(1, round(target * 0.8))
         rest = 90
         reason = "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
-    elif summary.form_events > 2:
+    elif summary.form_events > 2 or rom_counts["below_rule"] > 2:
         rest = 75
-        reason = "出现多次可观察偏差，保持次数，增加休息并优先练习动作。"
+        reason = "出现多次可观察偏差或未达到实验幅度，保持次数，增加休息并复核动作。"
     else:
         reason = "本次记录暂不支持增加训练量，保持计划并继续观察。"
     record("plan_adapter", {"fatigue": summary.fatigue, "discomfort": blocked,
@@ -50,6 +53,7 @@ def analyze(summary: SessionSummary) -> dict:
     record("reporter", {"source": summary.source, "energy": energy}, "生成可追踪摘要，不推断医疗状态。")
     return {"session_id": summary.session_id, "input_version": summary.input_version,
             "source": summary.source, "coverage": round(coverage, 3), "completion": round(completion, 3),
+            "rep_details": [rep.model_dump() for rep in summary.rep_details],
             "energy": energy, "proposal": {"target_reps": target, "rest_seconds": rest,
             "reason": reason, "blocked": blocked, "status": "blocked" if blocked else "pending"},
             "trace": trace, "saved": summary.persist}

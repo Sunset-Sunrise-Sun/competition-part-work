@@ -1,11 +1,30 @@
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Profile(BaseModel):
     weight_kg: float = Field(default=65, ge=30, le=250)
     experience: Literal["beginner", "regular"] = "beginner"
     goal: Literal["habit", "fitness"] = "habit"
+
+
+class SquatRep(BaseModel):
+    number: int = Field(ge=1, le=10000)
+    start_seconds: float = Field(ge=0, le=86400)
+    bottom_seconds: float = Field(ge=0, le=86400)
+    end_seconds: float = Field(ge=0, le=86400)
+    descent_seconds: float = Field(ge=0, le=86400)
+    ascent_seconds: float = Field(ge=0, le=86400)
+    min_angle_degrees: float = Field(ge=0, le=180)
+    rom: Literal["within_rule", "below_rule", "unobservable"]
+
+    @model_validator(mode="after")
+    def coherent_timing(self):
+        if not self.start_seconds <= self.bottom_seconds <= self.end_seconds:
+            raise ValueError("Rep timestamps must be ordered")
+        if abs(self.descent_seconds - (self.bottom_seconds - self.start_seconds)) > 0.001 or abs(self.ascent_seconds - (self.end_seconds - self.bottom_seconds)) > 0.001:
+            raise ValueError("Rep phase durations must match timestamps")
+        return self
 
 
 class SessionSummary(BaseModel):
@@ -22,6 +41,19 @@ class SessionSummary(BaseModel):
     target_reps: int = Field(default=12, ge=1, le=100)
     persist: bool = False
     profile: Profile = Field(default_factory=Profile)
+    rep_details: list[SquatRep] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def coherent_reps(self):
+        if self.rep_details and self.exercise != "squat":
+            raise ValueError("Rep details currently support squat only")
+        previous_end = -1.0
+        previous_number = 0
+        for rep in self.rep_details:
+            if rep.number > self.reps or rep.number <= previous_number or rep.start_seconds < previous_end or rep.end_seconds > self.active_seconds + 0.001:
+                raise ValueError("Rep details must be ordered, non-overlapping and within session")
+            previous_end, previous_number = rep.end_seconds, rep.number
+        return self
 
 
 class AcceptProposal(BaseModel):

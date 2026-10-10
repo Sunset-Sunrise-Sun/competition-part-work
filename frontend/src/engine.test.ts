@@ -1,9 +1,81 @@
 import { describe, expect, it } from 'vitest';
 import { ExerciseEngine, jointAngle, simulatedPose } from './engine';
+import type { Point } from './types';
+
+function kneePose(angle: number): Point[] {
+  const points = simulatedPose(0, 'squat');
+  const radians = (angle * Math.PI) / 180;
+  points[23] = {
+    x: 0.5 + Math.sin(radians) * 0.2,
+    y: 0.6 + Math.cos(radians) * 0.2,
+    visibility: 1,
+  };
+  points[25] = { x: 0.5, y: 0.6, visibility: 1 };
+  points[27] = { x: 0.5, y: 0.9, visibility: 1 };
+  points[11].visibility = 0;
+  return points;
+}
+
+function cycle(engine: ExerciseEngine, minimum: number, start = 0) {
+  let result = engine.update(kneePose(180), start);
+  for (let elapsed = 50; elapsed <= 3000; elapsed += 50) {
+    const angle = 180 - ((180 - minimum) * (1 - Math.cos((elapsed / 3000) * Math.PI * 2))) / 2;
+    result = engine.update(kneePose(angle), start + elapsed);
+  }
+  return result;
+}
 describe('exercise engine', () => {
   it('computes joint angle and rejects degenerate geometry', () => {
     expect(jointAngle({ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 })).toBeCloseTo(90);
     expect(jointAngle({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 1 })).toBeNaN();
+  });
+  it('restores the same physical angle across different image aspect ratios', () => {
+    const a = { x: 0.25, y: 0.25 },
+      b = { x: 0.5, y: 0.5 },
+      c = { x: 0.5, y: 0.75 };
+    const stretched = [a, b, c].map((p) => ({ x: p.x / 2, y: p.y }));
+    expect(jointAngle(...(stretched as [Point, Point, Point]), 2)).toBeCloseTo(jointAngle(a, b, c));
+    expect(jointAngle(a, b, c, 0)).toBeNaN();
+  });
+  it('counts a shallower cycle but grades its amplitude separately', () => {
+    const result = cycle(new ExerciseEngine('squat'), 120);
+    expect(result.reps).toBe(1);
+    expect(result.squatReps[0].rom).toBe('below_rule');
+    expect(result.squatReps[0].descent_seconds).toBeGreaterThan(0);
+    expect(result.squatReps[0].ascent_seconds).toBeGreaterThan(0);
+    const rep = result.squatReps[0];
+    expect(rep.descent_seconds + rep.ascent_seconds).toBeCloseTo(
+      rep.end_seconds - rep.start_seconds,
+    );
+  });
+  it('records a deeper cycle as reaching the experimental amplitude', () => {
+    const result = cycle(new ExerciseEngine('squat'), 90);
+    expect(result.squatReps[0].rom).toBe('within_rule');
+  });
+  it.each([90, 120])('cannot count a cycle when recording starts at %s degrees', (initialAngle) => {
+    const engine = new ExerciseEngine('squat');
+    let result;
+    for (let t = 0; t < 1200; t += 50)
+      result = engine.update(kneePose(t < 600 ? initialAngle : 180), t);
+    expect(result!.reps).toBe(0);
+  });
+  it('a short observation gap gives an unknown grade instead of a failure', () => {
+    const engine = new ExerciseEngine('squat');
+    let result;
+    for (let t = 0; t <= 3000; t += 50) {
+      const angle = 180 - (90 * (1 - Math.cos((t / 3000) * Math.PI * 2))) / 2;
+      result = engine.update(t === 1400 ? [] : kneePose(angle), t);
+    }
+    expect(result!.reps).toBe(1);
+    expect(result!.squatReps[0].rom).toBe('unobservable');
+  });
+  it('cannot bridge dropped frames without an explicit invalid-pose message', () => {
+    const engine = new ExerciseEngine('squat');
+    for (let t = 0; t <= 1600; t += 50)
+      engine.update(kneePose(180 - (90 * (1 - Math.cos((t / 3000) * Math.PI * 2))) / 2), t);
+    let result;
+    for (let t = 2400; t <= 3100; t += 50) result = engine.update(kneePose(180), t);
+    expect(result!.reps).toBe(0);
   });
   it.each(['squat', 'jumping_jack'] as const)('counts complete %s cycles', (exercise) => {
     const engine = new ExerciseEngine(exercise);

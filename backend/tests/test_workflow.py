@@ -64,3 +64,24 @@ def test_local_model_cannot_use_remote_endpoint(monkeypatch):
     monkeypatch.setenv("LOCAL_LLM_URL", "https://example.com")
     with pytest.raises(ValueError):
         local_endpoint()
+
+
+def test_rep_detail_reaches_analysis_and_report():
+    detail = dict(number=1, start_seconds=1, bottom_seconds=2, end_seconds=3,
+                  descent_seconds=1, ascent_seconds=1, min_angle_degrees=120, rom="below_rule")
+    report = analyze(SessionSummary(**payload(rep_details=[detail])))
+    assert report["rep_details"] == [detail]
+    assert report["trace"][0]["evidence"]["experimental_rom"]["below_rule"] == 1
+
+
+def test_rep_details_reject_inconsistent_timing():
+    detail = dict(number=1, start_seconds=1, bottom_seconds=2, end_seconds=3,
+                  descent_seconds=8, ascent_seconds=1, min_angle_degrees=120, rom="below_rule")
+    assert client.post("/api/sessions/analyze",json=payload(rep_details=[detail])).status_code == 422
+
+
+def test_rep_details_reject_wrong_exercise_or_out_of_session():
+    detail = dict(number=1, start_seconds=1, bottom_seconds=2, end_seconds=3,
+                  descent_seconds=1, ascent_seconds=1, min_angle_degrees=120, rom="unobservable")
+    assert client.post("/api/sessions/analyze",json=payload(exercise="jumping_jack",rep_details=[detail])).status_code == 422
+    assert client.post("/api/sessions/analyze",json=payload(active_seconds=2,observable_seconds=2,rep_details=[detail])).status_code == 422

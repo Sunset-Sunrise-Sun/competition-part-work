@@ -19,3 +19,5 @@
 | [WHO Healthy diet](https://www.who.int/news-room/fact-sheets/detail/healthy-diet) | 一般饮食原则，不用于个体诊断 |
 
 规则阈值、算力安排、页面、分工、实验目标均为项目设计，不是以上资料承诺的准确率。
+
+2026-10-10：[vision-demos 固定版本](https://github.com/jeremyipark/vision-demos/tree/8e1467ec39ac5b6b992ce748294664b87382756c)，查看各动作的 reps、ROM、校准、姿态网关和相似度实现，评估结果见 VISION_DEMOS_REVIEW。

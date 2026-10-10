@@ -24,6 +24,8 @@ self.onmessage = (event: MessageEvent) => {
             type: 'pose',
             points: result.landmarks[0] ?? [],
             timestamp: data.timestamp,
+            activeElapsedMs: data.activeElapsedMs,
+            aspectRatio: data.bitmap.width / data.bitmap.height,
           });
         } finally {
           data.bitmap.close();

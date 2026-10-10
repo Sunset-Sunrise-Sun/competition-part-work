@@ -1,6 +1,6 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LocalFit · 方案与团队交流文档</title><style>
 *{box-sizing:border-box}body{margin:0;font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#f3f5ef;color:#284236;line-height:1.85}aside{position:fixed;width:250px;padding:30px 22px;height:100vh;overflow:auto;background:#203f32;color:#e6efdc}aside strong{font-size:25px}aside small{display:block;color:#b6c7a6;margin:8px 0 25px}aside a{display:block;padding:9px 0;color:#c8d6bd;text-decoration:none;font-size:12px}main{margin-left:250px;padding:45px;max-width:1250px}section{background:#fffef8;border:1px solid #e0e6d8;border-radius:14px;padding:34px;margin-bottom:30px;scroll-margin-top:15px}h1{font-size:27px;line-height:1.5}h2{font-size:21px;margin-top:32px}h3{font-size:16px}p,li{font-size:14px}table{border-collapse:collapse;width:100%;font-size:12px;display:block;overflow:auto}th,td{border:1px solid #dce4d2;padding:10px;vertical-align:top}th{background:#edf2e4;text-align:left}pre{background:#eef2e8;padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}code{font-family:Consolas,monospace}a{color:#527746}blockquote{border-left:3px solid #91a573;padding-left:16px}button{background:#446646;color:white;border:0;border-radius:7px;padding:10px 16px;cursor:pointer;margin-bottom:20px}@media(max-width:800px){aside{position:static;width:auto;height:auto}main{margin:0;padding:15px}section{padding:20px}}@media print{aside,button{display:none}main{margin:0;padding:0;max-width:none}body{background:white}section{border:0;padding:0;break-before:page}section:first-of-type{break-before:auto}h1,h2,h3{break-after:avoid}tr{break-inside:avoid}a{color:inherit}pre{white-space:pre-wrap}@page{size:A4;margin:18mm}}
-</style></head><body><aside><strong>LocalFit Agent</strong><small>本地健身教练 · 团队交流文档<br>2026-10-09 / v0.1</small><a href="#doc-0">LocalFit Agent：参赛方案与可行性分析</a><a href="#doc-1">架构与 Agent 流</a><a href="#doc-2">里程碑与长期维护</a><a href="#doc-3">团队任务看板</a><a href="#doc-4">算法与闭环评测方案</a><a href="#doc-5">API 与数据合同</a><a href="#doc-6">数据边界与离线说明</a><a href="#doc-7">安装、启动与故障处理</a><a href="#doc-8">依赖、模型与数据清单</a><a href="#doc-9">参考资料与查阅记录</a><a href="#doc-10">架构决策记录</a><a href="#doc-11">验证记录</a></aside><main><button onclick="window.print()">打印 / 保存为 PDF</button><section id="doc-0"><h1>LocalFit Agent：参赛方案与可行性分析</h1>
+</style></head><body><aside><strong>LocalFit Agent</strong><small>本地健身教练 · 团队交流文档<br>2026-10-10 / v0.1</small><a href="#doc-0">LocalFit Agent：参赛方案与可行性分析</a><a href="#doc-1">vision-demos 技术评估与接入计划</a><a href="#doc-2">架构与 Agent 流</a><a href="#doc-3">里程碑与长期维护</a><a href="#doc-4">团队任务看板</a><a href="#doc-5">算法与闭环评测方案</a><a href="#doc-6">API 与数据合同</a><a href="#doc-7">数据边界与离线说明</a><a href="#doc-8">安装、启动与故障处理</a><a href="#doc-9">依赖、模型与数据清单</a><a href="#doc-10">参考资料与查阅记录</a><a href="#doc-11">架构决策记录</a><a href="#doc-12">验证记录</a></aside><main><button onclick="window.print()">打印 / 保存为 PDF</button><section id="doc-0"><h1>LocalFit Agent：参赛方案与可行性分析</h1>
 <p>版本：0.1 · 记录日期：2026-10-09 · 时区：Asia/Shanghai</p>
 <p>这份文档用于团队记录、展示和方案交流。赛事事实来自官网，技术能力来自官方文档；架构、里程碑和验收数字是项目建议。代码实现状态以 README 和 VALIDATION 为准，不能把规划项视为已完成。</p>
 <h2>1. 结论与项目定位</h2>
@@ -151,7 +151,137 @@
 <p>开源治理需 LICENSE、依赖与模型清单、贡献指南、Issue/PR 模板、启动文档、模型准备校验和可复现评测。原创代码、模型权重、食品数据、演示材料各核对许可。真实用户数据默认不入仓库。可用明确授权或合成数据。</p>
 <p>演示主线：档案 → 校准/机位 → 训练计数 → 可观察偏差 → 纠正 → 主动疲劳反馈 → Agent 调整 → 用户确认 → 复盘与饮食 → 断网继续。视频时长本赛道官网未给固定限制，可准备约 3–5 分钟版本并以审核邮件为准。名称 LocalFit Agent / 本地健身教练，全面健康教练是长期路线。</p>
 <h2>11. 当前尚待落实</h2>
-<p>成员实名与任务认领、报名单位、设备型号、真实动作标注审阅者、模型与数据许可、实测结果、第三动作选择、断网重启验收、仓库分支保护。按 TASKS 逐项更新，讨论决策写 ADR，不覆盖历史结论。</p></section><section id="doc-1"><h1>架构与 Agent 流</h1>
+<p>成员实名与任务认领、报名单位、设备型号、真实动作标注审阅者、模型与数据许可、实测结果、第三动作选择、断网重启验收、仓库分支保护。按 TASKS 逐项更新，讨论决策写 ADR，不覆盖历史结论。</p>
+<h2>12. 2026-10-10 参考项目补充</h2>
+<p>新增 vision-demos 源码评估，详见 VISION_DEMOS_REVIEW。适合借鉴单次幅度/节奏与个人机位校准；其训练推理依赖云端网关，没有现成卡路里模块。本次独立实现角度宽高比校正、深蹲计数与实验幅度分离、逐次阶段时间和不可评价状态，并接入报告与分析。个体校准、自动类别识别、训练/休息能耗分段仍列待实现任务。</p></section><section id="doc-1"><h1>vision-demos 技术评估与接入计划</h1>
+<p>核对日期：2026-10-10。参考仓库：<a href="https://github.com/jeremyipark/vision-demos">jeremyipark/vision-demos</a>。本次检查固定提交：<code>8e1467ec39ac5b6b992ce748294664b87382756c</code>。上游可能继续更新，后续复查需记录新版本。</p>
+<h2>结论</h2>
+<p>适合借鉴动作分析与可视化设计，不能直接替代 LocalFit 的离线运行、健康计划和热量估算。重点借鉴个人/机位校准、次数与幅度分离、逐次升降节奏、结构化证据和失败处理。训练示例采用云端网关及视频/图像上传；代码开源不代表推理离线或所有模型权重采用同一许可。本次未发现卡路里或 MET 能耗计算模块。</p>
+<h2>检查内容</h2>
+<table>
+<thead>
+<tr>
+<th>子项目</th>
+<th>实际实现</th>
+<th>LocalFit 的用途与边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>pull_ups</td>
+<td>躯干相对手部的位移、滞回计数、个人校准、逐次 ROM</td>
+<td>最优先参考；校准绑定用户与机位，不能把引体阈值直接用于深蹲</td>
+</tr>
+<tr>
+<td>chin_ups</td>
+<td>次数及上升/下降耗时</td>
+<td>借鉴阶段时间与回放面板；不是动作类别自动识别</td>
+</tr>
+<tr>
+<td>running</td>
+<td>步频、触地时间与膝形态分析</td>
+<td>后续有合适跑步机位时参考；不能直接转成个体热量</td>
+</tr>
+<tr>
+<td>dance_sync</td>
+<td>身体局部参考系、姿态与时序相似度</td>
+<td>教练示范动作对比候选；其分数是片段内相对同步，不是正确率或跨视频绝对分</td>
+</tr>
+<tr>
+<td>deadlift</td>
+<td>杠铃片跟踪、髋部角度、图像模型背部分类</td>
+<td>4090 实验路线候选；不可仅以躯干倾斜判定脊柱弯曲</td>
+</tr>
+<tr>
+<td>rock_climbing / 3d</td>
+<td>支点、路线、深度与三维分析</td>
+<td>当前居家训练范围不引入</td>
+</tr>
+</tbody>
+</table>
+<p>具体源码入口（固定版本）：</p>
+<ul>
+<li><a href="https://github.com/jeremyipark/vision-demos/blob/8e1467ec39ac5b6b992ce748294664b87382756c/pull_ups/how-it-works.md">pull_ups/how-it-works.md</a></li>
+<li><a href="https://github.com/jeremyipark/vision-demos/blob/8e1467ec39ac5b6b992ce748294664b87382756c/pull_ups/src/reps.py">pull_ups/src/reps.py</a></li>
+<li><a href="https://github.com/jeremyipark/vision-demos/blob/8e1467ec39ac5b6b992ce748294664b87382756c/pull_ups/src/rom.py">pull_ups/src/rom.py</a></li>
+<li><a href="https://github.com/jeremyipark/vision-demos/blob/8e1467ec39ac5b6b992ce748294664b87382756c/pull_ups/src/calibrate.py">pull_ups/src/calibrate.py</a></li>
+<li><a href="https://github.com/jeremyipark/vision-demos/blob/8e1467ec39ac5b6b992ce748294664b87382756c/deadlift/README.md">deadlift/README.md</a></li>
+<li><a href="https://github.com/jeremyipark/vision-demos/blob/8e1467ec39ac5b6b992ce748294664b87382756c/deadlift/src/classify.py">deadlift/src/classify.py</a></li>
+<li><a href="https://github.com/jeremyipark/vision-demos/blob/8e1467ec39ac5b6b992ce748294664b87382756c/dance_sync/similarity-metric-explained.md">dance_sync/similarity-metric-explained.md</a></li>
+</ul>
+<h2>1. 动作识别：先区分三件事</h2>
+<p>姿态估计回答关键点在哪里，类别识别回答正在做什么，阶段分析回答该动作完成到哪一步。上游训练示例和当前 LocalFit 都主要针对已选动作分析，不是通用活动分类器。</p>
+<p>比赛先由用户选择动作，系统验证机位和完整周期。自动类别识别未来可基于关键点时序小模型，必须包含 idle/unknown，避免把整理衣服或弯腰误认为训练。先用标注回放验证误识别，再扩充第三动作。</p>
+<h2>2. 次数、幅度和正确性分开</h2>
+<p>上游 pull_ups 独立记录次数和幅度，浅动作也可以计数，再评价两端幅度。LocalFit 采用独立实现的深蹲基线：先见到站立区间再启动候选周期，用下降/返回双区间完成计数，再按当前实验阈值记录幅度。</p>
+<p>本次实现 <code>within_rule / below_rule / unobservable</code> 三态，分别表示达到实验幅度、未达到、不可评价。它们不等于动作安全/危险或生物力学正确。上游某些不可见端点按未达标处理，我们保留 unknown 状态，避免把检测失败归因于用户。</p>
+<p>逐次记录开始、最低点、结束、下降和起身耗时、最低角度与幅度状态，界面与后端报告保留最近 100 次。开始时间是进入实验角度区间后的时间，不是精确运动起始点；平滑会影响极值和节奏，必须通过标注验证。暂停不进入活动时钟；超过 500ms 观察缺口丢弃未完成候选，不能在长缺口插值后强判。</p>
+<h2>3. 宽高比是实际修正项</h2>
+<p>MediaPipe x/y 分别按画面宽高归一化，不能直接当成相同长度单位算角度。此次 <code>jointAngle</code> 先把 x 差乘画面 width/height，再求二维角度。Worker 回传实际 ImageBitmap 的宽高比；躯干水平/垂直比也校正。</p>
+<p>这解决非方形画面的几何尺度问题，不解决单目投影、摄像头方向或关键点偏移。上游 COCO-17 与我们 MediaPipe-33 的编号不同，后续替换姿态模型必须显式映射，不能直接按数组下标接入。</p>
+<p>关键映射参考：COCO shoulder 5/6 → MediaPipe 11/12；elbow 7/8 → 13/14；wrist 9/10 → 15/16；hip 11/12 → 23/24；knee 13/14 → 25/26；ankle 15/16 → 27/28。缺失的额外关键点必须标不可见；COCO score 不应未经验证等同 MediaPipe visibility。</p>
+<h2>4. 校准应绑定用户、动作与机位</h2>
+<p>上游记录参考动作的统计量、来源和版本；更换用户或机位需重新校准。对我们有意义的合同：profile_version、exercise、camera/setup、模型版本、站立/最低膝角、躯干尺度、有效样本数、分散程度和审阅状态。</p>
+<p>参考动作需用户确认并尽量由有训练经验者审阅。若差异过大或遮挡，拒绝保存校准。个人做得最深的一次不自动成为“正确深蹲”。校准是待实现任务，本次只完成固定规则的单次幅度与时序记录。</p>
+<h2>5. 实时与离线算法不能直接互换</h2>
+<p>上游部分计数采用居中滤波、完整片段幅度统计和插值，这些可能读取未来帧或整段数据。适合离线回放，不能直接声称实时无延迟。我们的当前引擎采用因果平滑、已有历史和缺口拒绝；后续保存原始摘要用于组后更精细复盘。平滑系数仍按帧，跨 FPS 可比性待改成按时间参数并评测。</p>
+<p>建议做对照：同一授权回放 → MediaPipe 本地姿态 → 实时规则；可选 4090 本地 ViTPose → 同一归一化接口 → 同一规则。比较关键点失败、计数、误报、时延与资源，不仅比较演示观感。没有需求授权时，不调用上游云端 API 上传真实用户视频。</p>
+<h2>6. 卡路里计算保持独立模块</h2>
+<p>本次源码与说明的关键词核查未找到 calorie/kcal/能耗模型，因此不能写“已接入该项目的热量算法”。逐次节奏能帮助分段或查强度，但仅凭姿态、次数或相似度无法精确推断个体代谢；负荷、体重、肌肉募集和生理反应都会影响结果。</p>
+<p>路线：动作/强度映射 → 区分训练和休息时长 → 用户体重 → MET 场景 → 总/净消耗及不确定性说明。运动总 kcal 约为 Σ MET×kg×小时；净活动消耗需扣除同时间静息口径。可穿戴心率只能作为辅助，不是无误差真值。无测量真值不报告能耗准确率。</p>
+<p>当前后端仍按运行活动时钟和演示 MET 区间估算，尚未自动分出站立/休息，原地停留可能高估。此次单次时间数据是后续分段的基础，不能直接把候选周期时长当作全部运动生理时长，也不能用次数×固定 kcal。</p>
+<h2>7. 许可与复用</h2>
+<p>上游源码标 Apache-2.0。本次只参考设计和源码评估，没有复制或打包上游实现；LocalFit 的独立实现仍属本仓库原创代码。若后续移植源代码，保留上游许可证、相关版权和适用 NOTICE，标明修改；不能把上游代码全部改标 MIT。API 服务条款、模型权重和视频素材许可分别核对。</p>
+<p>临时只读克隆放 <code>.localrun/references/vision-demos</code>，被 Git 忽略；不运行上游项目，不安装其依赖，不读取用户密钥，也不上传视频。</p>
+<h2>8. 团队接入任务</h2>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>角色</th>
+<th>状态</th>
+<th>完成定义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>非方形角度校正</td>
+<td>A/C</td>
+<td>已实现</td>
+<td>Worker 宽高比、角度和倾斜比修正，几何回归测试</td>
+</tr>
+<tr>
+<td>深蹲次数/幅度/时间分离</td>
+<td>A/B/C</td>
+<td>已实现规则基线</td>
+<td>结构化记录、未知状态、API 校验和复盘表</td>
+</tr>
+<tr>
+<td>个人机位校准</td>
+<td>A/C</td>
+<td>待实现</td>
+<td>样本审阅、版本、复校准、跨用户对照</td>
+</tr>
+<tr>
+<td>能耗活动/休息分段</td>
+<td>A/B</td>
+<td>待实现</td>
+<td>显式分段、MET 来源、总/净口径与边界测试</td>
+</tr>
+<tr>
+<td>跑步/第三动作</td>
+<td>A</td>
+<td>后续</td>
+<td>机位与数据先落实，不直接套引体阈值</td>
+</tr>
+<tr>
+<td>4090 本地姿态对照</td>
+<td>A</td>
+<td>可选</td>
+<td>不经云端、显式关键点映射、公平指标比较</td>
+</tr>
+</tbody>
+</table></section><section id="doc-2"><h1>架构与 Agent 流</h1>
 <h2>当前运行图</h2>
 <pre><code class="language-mermaid">flowchart TD
     U[用户选择动作与目标] --&gt; W[React 训练页面]
@@ -189,6 +319,7 @@
 确认版本：必须匹配当前 input_version，否则 409
 </code></pre>
 <p>阈值和 500ms 是当前实验规则，待评测优化。当前 UI每次复盘生成新 session_id；API 也支持同会话版本更新。已保存报告可从历史读取；重启后不会恢复内存中的待确认提案，避免意外执行旧计划。</p>
+<p>2026-10-10：Worker 附带源图像宽高比与采样活动时钟，二维角度按共同尺度计算。深蹲候选先见站立，再下降/返回；次数与幅度分开；缺口导致未知或丢弃，单次记录保留最近 100 条。后端校验非重叠时序，报告展示最低角度与升降时间。参考项目分析见 VISION_DEMOS_REVIEW，自动机位/个体校准仍待实现。</p>
 <table>
 <thead>
 <tr>
@@ -224,7 +355,7 @@
 <h2>性能安排</h2>
 <p>渲染与推理解耦；当前前端约每 80ms 请求一次帧，单帧在途，Worker 同步 CPU 推理。不同笔记本实际帧率未知。训练中不调用 LLM；模型解释在组末按需运行。后续考虑 GPU 后端、输入降采样和帧耗时统计，先保留可比较的 CPU 基线。</p>
 <h2>部署形态</h2>
-<p>开发：Vite 5173 代理 API → 127.0.0.1:8000。单服务本地展示：先准备模型并构建网页，再启动／重启后端，FastAPI 将 frontend/dist 挂载在根路径，API 与网页同源，打开 8000。静态挂载在 API 路由之后，不遮挡 OpenAPI。Vite preview 仅静态预览，不代理 API。最终可封装桌面启动器。远程 GPU 模式单独标识数据边界，不算同机端侧。</p></section><section id="doc-2"><h1>里程碑与长期维护</h1>
+<p>开发：Vite 5173 代理 API → 127.0.0.1:8000。单服务本地展示：先准备模型并构建网页，再启动／重启后端，FastAPI 将 frontend/dist 挂载在根路径，API 与网页同源，打开 8000。静态挂载在 API 路由之后，不遮挡 OpenAPI。Vite preview 仅静态预览，不代理 API。最终可封装桌面启动器。远程 GPU 模式单独标识数据边界，不算同机端侧。</p></section><section id="doc-3"><h1>里程碑与长期维护</h1>
 <table>
 <thead>
 <tr>
@@ -280,7 +411,7 @@
 <p>A100 用于确认能提升已有错误模式的小模型训练；4090 做评测和对照；普通笔记本是真实验收基线。模型慢时缩短上下文、串行调度、规则降级。五天内动作不稳就固定两个动作，推迟语音、表情、照片与自训模型。</p>
 <h2>赛后路线（计划，不承诺日期）</h2>
 <p>v0.2：自动机位、个体校准、经核验食品数据、历史趋势；v0.3：本地语音、轻量时序模型、性能优化、桌面打包；v1：更多真实验证、可扩展动作规则、社区贡献、学校和健身指导场景试点。</p>
-<p>维护目标：每个模块至少两人了解；每月评审依赖与失败案例；发布可复现版本、模型说明和数据来源；反馈通过 Issue 进入任务；商业增强与开源核心边界如需引入，另写 ADR。比赛是交付节点，不替代长期维护安排。</p></section><section id="doc-3"><h1>团队任务看板</h1>
+<p>维护目标：每个模块至少两人了解；每月评审依赖与失败案例；发布可复现版本、模型说明和数据来源；反馈通过 Issue 进入任务；商业增强与开源核心边界如需引入，另写 ADR。比赛是交付节点，不替代长期维护安排。</p></section><section id="doc-4"><h1>团队任务看板</h1>
 <p>更新日期：2026-10-09。角色 A–E 为建议，尚未实名认领。状态：Done=代码实现与所列验证完成；Todo=待做；Review=待真实验证。对应 Issue 可用本文件任务 ID，进度以 PR 合并证据更新。</p>
 <table>
 <thead>
@@ -334,6 +465,20 @@
 <td>A</td>
 <td>Todo</td>
 <td>自动机位检查与初始校准；对比固定阈值</td>
+</tr>
+<tr>
+<td>A-04</td>
+<td>P0</td>
+<td>A/C</td>
+<td>Done</td>
+<td>10/10：非方形图像角度校正、深蹲次数/幅度分离、单次节奏和未知状态</td>
+</tr>
+<tr>
+<td>B-05</td>
+<td>P0</td>
+<td>A/B</td>
+<td>Todo</td>
+<td>活动与休息能耗分段、MET 条目映射、总/净口径；见 VISION_DEMOS_REVIEW</td>
 </tr>
 <tr>
 <td>B-01</td>
@@ -456,7 +601,7 @@
 <li>演示笔记本型号、浏览器及内存；原型用户来源与标注审阅人。</li>
 <li>报名单位；开源许可证复核负责人；是否正式采用本仓库 MIT。</li>
 <li>第三动作、语音和学习模型是否有足够时间；P0 完成前不阻塞主线。</li>
-</ul></section><section id="doc-4"><h1>算法与闭环评测方案</h1>
+</ul></section><section id="doc-5"><h1>算法与闭环评测方案</h1>
 <p>以下是待执行方案，不是已取得的真实精度。当前自动化测试证明逻辑约束，不证明人体动作模型泛化。</p>
 <h2>数据与划分</h2>
 <p>初步邀请 8–12 位知情同意成年人，覆盖不同身高、体型、衣着、光照与摄像头距离。每动作录制正常、未完成、暂停、出画、遮挡等情况，避免要求用户故意做危险动作。取得视频存储与使用选择；标注者审阅计数和问题，原始资料不入 Git。</p>
@@ -538,7 +683,7 @@
 失败情况 / 降级行为：
 离线重启与外部请求证据：
 下一步：
-</code></pre></section><section id="doc-5"><h1>API 与数据合同</h1>
+</code></pre></section><section id="doc-6"><h1>API 与数据合同</h1>
 <p>后端 <code>http://127.0.0.1:8000</code>，交互式 OpenAPI <code>/docs</code>。只监听回环地址，默认单用户、单进程。不提供视频上传接口。</p>
 <table>
 <thead>
@@ -604,6 +749,7 @@
 }
 </code></pre>
 <p>exercise：squat/jumping_jack；source：simulation/camera；fatigue：0–10。observable_seconds 不得大于 active_seconds。数值范围以 schema 为准。体重由用户填写，不由视频推断。</p>
+<p>可选 <code>rep_details</code>（默认空，最多 100 条）为深蹲单次记录，字段：number、start_seconds、bottom_seconds、end_seconds、descent_seconds、ascent_seconds、min_angle_degrees、rom。rom 为 within_rule/below_rule/unobservable，只代表实验幅度规则。时间为不含暂停的活动时钟；阶段差值必须一致，次数递增、不重叠且位于本组时长以内。开合跳暂不接受此字段。结果回传用于复盘、trace 与保存。</p>
 <p>响应包含 coverage、completion、energy、proposal、trace、saved。energy 是 gross_scenario_estimate：含静息的演示假设范围，不是统计区间。proposal 状态 pending/blocked/accepted。</p>
 <p>确认 body：<code>{"input_version":1}</code>。不存在的当前会话 404；重复／旧版本更新、旧版本确认、不适禁止继续均 409；schema 不合法 422。accept 幂等地返回已确认状态，不自动启动摄像头或运动。</p>
 <h2>饮食请求</h2>
@@ -611,11 +757,11 @@
 </code></pre>
 <p>当前 food_id：rice/egg/milk/broccoli，每次最多 100 条。响应明确 data_status=illustrative_unverified。正式食品条目必须增加数据库 ID、来源与版本。该接口当前不保存饮食历史。</p>
 <h2>将来 WebSocket 约定</h2>
-<p>尚未实现。实时计数不需要每帧发网络请求；未来仅将阶段摘要、用户指令和有限状态推送编排器。事件必须含 session_id、event_id、输入版本与事件时间，去重后处理。禁止未经范围评估增加原始视频上传。</p></section><section id="doc-6"><h1>数据边界与离线说明</h1>
+<p>尚未实现。实时计数不需要每帧发网络请求；未来仅将阶段摘要、用户指令和有限状态推送编排器。事件必须含 session_id、event_id、输入版本与事件时间，去重后处理。禁止未经范围评估增加原始视频上传。</p></section><section id="doc-7"><h1>数据边界与离线说明</h1>
 <h2>当前默认行为</h2>
 <ul>
 <li>摄像头只申请 video，不申请 audio。画面只到浏览器和同源 Worker，不传后端。</li>
-<li>关键点仅前端内存。后端接收次数、时长、质量事件、体重、疲劳与不适等摘要。</li>
+<li>关键点仅前端内存。后端接收次数、时长、质量事件、体重、疲劳、不适以及最近 100 次深蹲的阶段时间、最低角度与实验幅度状态等摘要。新增单次数据仍可能属于敏感健康信息，遵循同一保存选择。</li>
 <li><code>persist=false</code> 默认不写 SQLite；内存报告最多 100 条，进程结束消失。保存是用户主动选择。</li>
 <li>SQLite 在 <code>data/sessions.sqlite3</code>，Git 忽略。历史读取最多 50 条。</li>
 <li>删除清空本机摘要表和内存报告；当前不声称物理安全擦除，SQLite 或文件系统残留应由系统磁盘保护处理。</li>
@@ -635,7 +781,7 @@
 <li>未选择保存时检查无新记录；选择后读历史，再删除。</li>
 <li>保存设备、模型、commit、网络记录和失败场景。开发热更新会访问本机 WebSocket，不等于云端上传。</li>
 </ol>
-<p>浏览器缓存、页面里“本地”文字、无视频上传接口不能独自证明完整离线。尚未做完上述步骤前，用“设计支持离线，验收待完成”。</p></section><section id="doc-7"><h1>安装、启动与故障处理</h1>
+<p>浏览器缓存、页面里“本地”文字、无视频上传接口不能独自证明完整离线。尚未做完上述步骤前，用“设计支持离线，验收待完成”。</p></section><section id="doc-8"><h1>安装、启动与故障处理</h1>
 <h2>环境</h2>
 <p>Node.js 22.12+；Python 3.11+（本次机器是 Python 3.14）；支持摄像头的现代 Chrome/Edge。仅本机 localhost，普通笔记本性能需要实测。</p>
 <p>Windows 从 README 的两终端命令启动。macOS/Linux 把 <code>.venv\Scripts\python.exe</code> 换成 <code>.venv/bin/python</code>。后端锁文件是本次实测版本；若其他平台需变更依赖，记录并更新测试。</p>
@@ -662,7 +808,7 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 <pre><code class="language-powershell">.\.venv\Scripts\python.exe -m pip install -r scripts/requirements.txt
 .\.venv\Scripts\python.exe scripts/export_docs.py
 </code></pre>
-<p><code>docs/展示文档.html</code> 是无外部依赖的独立文档，下载后双击查看，也可浏览器打印为 PDF。Markdown 为团队维护的源版本。源码 Mermaid 在 GitHub 可渲染，展示版保留文本图与独立结构说明。</p></section><section id="doc-8"><h1>依赖、模型与数据清单</h1>
+<p><code>docs/展示文档.html</code> 是无外部依赖的独立文档，下载后双击查看，也可浏览器打印为 PDF。Markdown 为团队维护的源版本。源码 Mermaid 在 GitHub 可渲染，展示版保留文本图与独立结构说明。</p></section><section id="doc-9"><h1>依赖、模型与数据清单</h1>
 <p>本表是项目清单与复核入口，未表示完成法律审阅。原创代码 MIT 不改变第三方条款。实际 npm 版本看 package-lock，Python 看 requirements.lock。</p>
 <table>
 <thead>
@@ -730,7 +876,8 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 </tr>
 </tbody>
 </table>
-<p>发布材料需要：依赖许可证清单、模型卡、数据引用与版本、演示素材授权。不能以“来自网页”或“模型开源”代替授权核对。用户视频、访谈和医疗数据不提交仓库。</p></section><section id="doc-9"><h1>参考资料与查阅记录</h1>
+<p>发布材料需要：依赖许可证清单、模型卡、数据引用与版本、演示素材授权。不能以“来自网页”或“模型开源”代替授权核对。用户视频、访谈和医疗数据不提交仓库。</p>
+<p>2026-10-10 新增参考：jeremyipark/vision-demos（Apache-2.0），仅源码评估与设计借鉴，不是运行依赖，没有复制上游实现。若后续移植，按上游许可保留适用版权/NOTICE并标修改，详见 VISION_DEMOS_REVIEW。</p></section><section id="doc-10"><h1>参考资料与查阅记录</h1>
 <p>核对日期：2026-10-09。以下仅列支持对应事实的官方／原始资料，不代表推荐最新版本。赛事后续通知可能更新要求。</p>
 <table>
 <thead>
@@ -794,7 +941,8 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 </tr>
 </tbody>
 </table>
-<p>规则阈值、算力安排、页面、分工、实验目标均为项目设计，不是以上资料承诺的准确率。</p></section><section id="doc-10"><h1>架构决策记录</h1>
+<p>规则阈值、算力安排、页面、分工、实验目标均为项目设计，不是以上资料承诺的准确率。</p>
+<p>2026-10-10：<a href="https://github.com/jeremyipark/vision-demos/tree/8e1467ec39ac5b6b992ce748294664b87382756c">vision-demos 固定版本</a>，查看各动作的 reps、ROM、校准、姿态网关和相似度实现，评估结果见 VISION_DEMOS_REVIEW。</p></section><section id="doc-11"><h1>架构决策记录</h1>
 <h2>ADR-001：先交付训练闭环（2026-10-09）</h2>
 <p>背景：4–5 人，约三周提交，多模态原设想范围过大。</p>
 <p>决策：两个动作＋质量门控＋反馈＋计划确认是 P0；表情、照片份量、语音、自训模型按完成程度延期。</p>
@@ -810,7 +958,10 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 <p>后果：纯离线演示有清晰数据边界；远程模式后续需独立说明。</p>
 <h2>ADR-005：Markdown 源文档＋独立 HTML 展示</h2>
 <p>决策：团队日常维护 Markdown，在 GitHub Review；导出无外部依赖 HTML 用于交流和打印。</p>
-<p>后果：便于共同版本管理；PDF 手动打印后不作为主源，每次生成从 Markdown 同步。</p></section><section id="doc-11"><h1>验证记录</h1>
+<p>后果：便于共同版本管理；PDF 手动打印后不作为主源，每次生成从 Markdown 同步。</p>
+<h2>ADR-006：参考 vision-demos，分离计数与幅度（2026-10-10）</h2>
+<p>决策：参考固定版本的设计，独立实现图像宽高比校正、深蹲逐次时序和实验幅度三态；不复制或运行云端网关实现。自动校准、能耗分段另列任务。</p>
+<p>后果：浅动作不会只因未达幅度阈值被完全忽略；不可见记未知或丢弃，避免误归因。需要新的标注对照；实验阈值不等于生物力学标准。源代码 Apache-2.0、模型权重、服务条款需分开评估。</p></section><section id="doc-12"><h1>验证记录</h1>
 <p>记录日期：2026-10-09。本文件只登记实际执行的检查；真实人体准确率、设备性能和全部离线验收不得填写推测数字。</p>
 <h2>本次检查</h2>
 <p>初始环境：Windows、Node 24.19.0、Python 3.14.7。</p>
@@ -878,4 +1029,13 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 <li>断网后关闭页面和服务再启动的完整验收。</li>
 <li>第三方从干净环境复现。</li>
 </ul>
-<p>结果必须关联 commit、设备、数据和执行人。</p></section></main></body></html>
+<p>结果必须关联 commit、设备、数据和执行人。</p>
+<h2>2026-10-10：vision-demos 参考与规则增强</h2>
+<p>参考源版本：8e1467ec39ac5b6b992ce748294664b87382756c。未运行上游云端实现或上传音视频，独立实现宽高比修正、深蹲逐次幅度与时序、未知状态、报告接线。</p>
+<ul>
+<li>前端 <code>npm test</code>：12 项通过，包括宽高比不变性、浅/深周期分离、起始中途姿态、短遮挡未知、长缺口拒绝。</li>
+<li>后端 <code>python -m pytest backend/tests -q</code>：11 项通过，新增单次证据回传、时序一致性、动作类别和组时长边界校验。</li>
+<li><code>npm run build</code>：TypeScript 和生产构建通过。</li>
+<li>上述为合成输入/接口验证，不代表真实人体准确率。真实摄像头和视觉交互仍待实机验收。</li>
+<li>卡路里公式未改为学习型预测或自动分段；明确记录现有运行时钟可能包含静止/休息的限制。</li>
+</ul></section></main></body></html>

@@ -18,6 +18,7 @@
 | 算法、评测、验收 | [EVALUATION](docs/EVALUATION.md) |
 | 离线、隐私与部署 | [PRIVACY](docs/PRIVACY.md)、[SETUP](docs/SETUP.md) |
 | 许可、参考与决策 | [DEPENDENCIES](docs/DEPENDENCIES.md)、[SOURCES](docs/SOURCES.md)、[ADR](docs/ADR.md) |
+| vision-demos 借鉴与接入 | [源码评估](docs/VISION_DEMOS_REVIEW.md) |
 | 本次实际验证 | [VALIDATION](docs/VALIDATION.md) |
 
 ## 快速启动（Windows PowerShell）
@@ -57,6 +58,7 @@ npm run prepare:models
 - React 网页：训练、复盘、饮食记录、项目协作四个视图，响应式布局。
 - 可复现的模拟动作回放；真实摄像头 → Web Worker → MediaPipe 姿态接线。
 - 深蹲与开合跳计数、关键点质量门控、深蹲倾斜提示的规则基线。
+- 画面宽高比校正；深蹲次数与实验幅度独立，逐次下降/起身时间、最低角度和不可评价状态。
 - FastAPI：结构化摘要、规则角色协作、版本检查、计划确认、示例能量计算。
 - 摘要默认仅内存；勾选同意后保存 SQLite；支持导出和删除。
 - 同机 llama.cpp 可选解释接口，超时降级；不允许模型直接修改计划。

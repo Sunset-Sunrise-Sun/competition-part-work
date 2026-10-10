@@ -35,6 +35,7 @@ const emptyMetrics: Metrics = {
   hint: '选择动作，开始一组训练。',
   angle: 180,
   events: 0,
+  squatReps: [],
 };
 const connections = [
   [11, 12],
@@ -141,7 +142,11 @@ export default function App() {
         live.current.frameBusy = false;
         points.current = event.data.points;
         if (live.current.running) {
-          const result = engine.current.update(event.data.points, event.data.timestamp);
+          const result = engine.current.update(
+            event.data.points,
+            event.data.activeElapsedMs,
+            event.data.aspectRatio,
+          );
           metricRef.current = result;
           live.current.quality = result.quality;
           live.current.lastPose = performance.now();
@@ -223,7 +228,15 @@ export default function App() {
                 live.current.frameBusy = false;
                 return;
               }
-              currentWorker.postMessage({ type: 'frame', bitmap, timestamp: now }, [bitmap]);
+              currentWorker.postMessage(
+                {
+                  type: 'frame',
+                  bitmap,
+                  timestamp: now,
+                  activeElapsedMs: live.current.elapsed * 1000,
+                },
+                [bitmap],
+              );
             })
             .catch(() => {
               live.current.frameBusy = false;
@@ -304,6 +317,7 @@ export default function App() {
           active_seconds: live.current.elapsed,
           observable_seconds: Math.min(live.current.observable, live.current.elapsed),
           form_events: metricRef.current.events,
+          rep_details: metricRef.current.squatReps,
           fatigue,
           discomfort,
           target_reps: target,
@@ -505,6 +519,15 @@ export default function App() {
                 <span>本组完成度</span>
                 <strong>{Math.round(progress)}%</strong>
               </div>
+              {exercise === 'squat' && (
+                <p className="muted">
+                  达到实验幅度 {metrics.squatReps.filter((r) => r.rom === 'within_rule').length} 次
+                  · 幅度不足 {metrics.squatReps.filter((r) => r.rom === 'below_rule').length} 次 ·
+                  不可评价 {metrics.squatReps.filter((r) => r.rom === 'unobservable').length} 次
+                  <br />
+                  次数与幅度分开记录，不代表动作正确或安全。
+                </p>
+              )}
               <div className="coach-tip">
                 <Sparkles size={19} />
                 <div>
@@ -668,6 +691,44 @@ export default function App() {
                   {report.energy.note}{' '}
                   {report.saved ? '摘要已保存至本机。' : '摘要仅暂存在当前会话。'}
                 </p>
+                {!!report.rep_details?.length && (
+                  <section className="panel">
+                    <h3>深蹲单次幅度与节奏（最近 100 次）</h3>
+                    <p className="muted">
+                      下降从角度进入实验区间开始计时；平滑与机位会影响结果。未知不等于动作错误。
+                    </p>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="rep-table">
+                        <thead>
+                          <tr>
+                            <th>次数</th>
+                            <th>最低膝角</th>
+                            <th>下降 / 起身</th>
+                            <th>幅度记录</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {report.rep_details.map((r) => (
+                            <tr key={r.number}>
+                              <td>{r.number}</td>
+                              <td>{r.min_angle_degrees.toFixed(1)}°</td>
+                              <td>
+                                {r.descent_seconds.toFixed(2)}s / {r.ascent_seconds.toFixed(2)}s
+                              </td>
+                              <td>
+                                {r.rom === 'within_rule'
+                                  ? '达到实验阈值'
+                                  : r.rom === 'below_rule'
+                                    ? '未达到实验阈值'
+                                    : '不可评价'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
                 <div className="report-grid">
                   <section className="panel">
                     <div className="card-kicker">NEXT SET</div>
