@@ -46,7 +46,7 @@ def analyze(summary: SessionSummary) -> dict:
 
     energy = {
         **session_energy(summary.exercise, summary.profile.weight_kg, summary.active_seconds,
-                         summary.observable_seconds, summary.rep_details),
+                         summary.observable_seconds, summary.rep_details, summary.reps),
         "daily": daily_requirement(summary.profile),
     }
     record("reporter", {"source": summary.source, "energy": energy}, "生成可追踪摘要，不推断医疗状态。")

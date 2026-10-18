@@ -41,18 +41,31 @@ export function dailyRequirement(input: {
   };
 }
 
+function typicalRepSeconds(exercise: Exercise) {
+  const family = EXERCISES[exercise]?.family;
+  if (family === 'rope' || family === 'bounce' || family === 'high_knee' || family === 'jog' || family === 'punch' || family === 'climber' || family === 'circle')
+    return 0.6;
+  if (family === 'hold_plank' || family === 'hold_squat') return 8;
+  if (family === 'burpee') return 4;
+  return 2;
+}
+
 export function sessionEnergy(input: {
   exercise: Exercise;
   weightKg: number;
   activeSeconds: number;
   observableSeconds: number;
+  reps?: number;
   repDetails?: SquatRep[];
 }) {
   const item = EXERCISES[input.exercise];
   const spec = item ? { work: item.met, rest: item.rest, id: item.id, label: item.name } : FALLBACK;
-  let work = (input.repDetails ?? []).reduce((sum, r) => sum + r.descent_seconds + r.ascent_seconds, 0);
+  const phases = (input.repDetails ?? []).reduce((sum, r) => sum + r.descent_seconds + r.ascent_seconds, 0);
+  const fromReps = (input.reps ?? input.repDetails?.length ?? 0) * typicalRepSeconds(input.exercise);
+  const fromVisible = Math.max(input.observableSeconds, input.activeSeconds * 0.5) * 0.85;
+  let work = Math.max(phases, fromReps, fromVisible);
   if (work <= 0) work = Math.min(input.activeSeconds, input.observableSeconds * 0.7);
-  work = Math.min(work, input.activeSeconds);
+  work = Math.min(Math.max(work, 0), input.activeSeconds);
   const rest = Math.max(0, input.activeSeconds - work);
   const hoursW = work / 3600;
   const hoursR = rest / 3600;
@@ -67,6 +80,6 @@ export function sessionEnergy(input: {
     net_high_kcal: Math.round(Math.max(0, high - basal) * 10) / 10,
     work_seconds: Math.round(work * 10) / 10,
     rest_seconds: Math.round(rest * 10) / 10,
-    note: `${spec.label}（Compendium ${spec.id}）按活动/休息分段；总消耗含静息，净消耗已扣 1.0 MET。不是测量值。`,
+    note: `${spec.label} ${spec.work[0]}–${spec.work[1]} MET × ${input.weightKg}kg × ${Math.max(1, Math.round(input.activeSeconds))}秒 / 3600。短组只有数 kcal 是公式结果，不是漏算；一小时连续约 ${Math.round(spec.work[0] * input.weightKg)}–${Math.round(spec.work[1] * input.weightKg)} kcal。净消耗已扣 1.0 MET。`,
   };
 }

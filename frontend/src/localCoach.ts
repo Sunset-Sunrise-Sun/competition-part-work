@@ -61,6 +61,7 @@ export function analyzeLocal(summary: LocalSummary): Report {
       weightKg: summary.profile.weight_kg,
       activeSeconds: summary.active_seconds,
       observableSeconds: summary.observable_seconds,
+      reps: summary.reps,
       repDetails: details,
     }),
     daily: dailyRequirement({

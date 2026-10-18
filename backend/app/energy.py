@@ -32,14 +32,15 @@ def daily_requirement(profile) -> dict:
 
 
 def session_energy(exercise: str, weight_kg: float, active_seconds: float,
-                   observable_seconds: float, rep_details: list) -> dict:
+                   observable_seconds: float, rep_details: list, reps: int = 0) -> dict:
     spec = MET.get(exercise, MET_DEFAULT)
-    work = 0.0
-    for rep in rep_details:
-        work += getattr(rep, "descent_seconds", 0) + getattr(rep, "ascent_seconds", 0)
+    phases = sum(getattr(rep, "descent_seconds", 0) + getattr(rep, "ascent_seconds", 0) for rep in rep_details)
+    from_reps = max(reps, len(rep_details)) * 2.0
+    from_visible = max(observable_seconds, active_seconds * 0.5) * 0.85
+    work = max(phases, from_reps, from_visible)
     if work <= 0:
         work = min(active_seconds, observable_seconds * 0.7)
-    work = min(work, active_seconds)
+    work = min(max(work, 0.0), active_seconds)
     rest = max(0.0, active_seconds - work)
     hours_w, hours_r, hours_a = work / 3600, rest / 3600, active_seconds / 3600
     low = spec["work"][0] * weight_kg * hours_w + spec["rest"] * weight_kg * hours_r
@@ -56,5 +57,9 @@ def session_energy(exercise: str, weight_kg: float, active_seconds: float,
         "met_rest": spec["rest"],
         "compendium_id": spec["id"],
         "kind": "gross_and_net_scenario",
-        "note": f"{spec['label']}（Compendium {spec['id']}）按活动/休息分段；总消耗含静息，净消耗已扣 1.0 MET。不是测量值。",
+        "note": (
+            f"{spec['label']} {spec['work'][0]}–{spec['work'][1]} MET × {weight_kg}kg × "
+            f"{max(1, round(active_seconds))}秒 / 3600。短组只有数 kcal 是公式结果；"
+            f"一小时连续约 {round(spec['work'][0] * weight_kg)}–{round(spec['work'][1] * weight_kg)} kcal。"
+        ),
     }

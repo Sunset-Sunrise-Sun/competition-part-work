@@ -22,7 +22,7 @@ import { EXERCISE_GROUPS, EXERCISE_IDS, EXERCISES, exerciseLabel, isExercise } f
 import { ExerciseEngine, simulatedPose } from './engine';
 import { acceptReport, request } from './api';
 import { drawAvatar, drawRawPose, drawRetargetedOverlay, drawVideoFrame, syncCanvas } from './draw';
-import { dailyRequirement, type ActivityLevel, type Sex } from './energy';
+import { dailyRequirement, sessionEnergy, type ActivityLevel, type Sex } from './energy';
 import { estimateFoods, searchFoods } from './foods';
 import { defaultProfile, retargetPose } from './smpl';
 import type { BodyModel } from './smpl';
@@ -75,12 +75,16 @@ export default function App() {
   const [foodQuery, setFoodQuery] = useState('');
   const [grams, setGrams] = useState(150);
   const [customKcal, setCustomKcal] = useState('');
+  const [showFoodSuggest, setShowFoodSuggest] = useState(false);
+  const [foodBusy, setFoodBusy] = useState(false);
+  const [foodError, setFoodError] = useState('');
   const [foodResult, setFoodResult] = useState<{
     total_kcal: number;
     note: string;
     items?: { name: string; grams: number; total_kcal: number; matched: boolean }[];
   } | null>(null);
   const [meal, setMeal] = useState<{ name: string; grams: number; total_kcal: number }[]>([]);
+  const [mealConfirmed, setMealConfirmed] = useState(false);
   const [explanation, setExplanation] = useState('');
   const [videoName, setVideoName] = useState('');
   const video = useRef<HTMLVideoElement>(null);
@@ -141,35 +145,28 @@ export default function App() {
   }, [exercise, threshold, sourceMode]);
 
   useEffect(() => {
-    live.current.source = sourceMode;
-    live.current.ready = false;
-    setModelReady(false);
-    if (sourceMode === 'simulation') return;
     let cancelled = false;
     const poseWorker = new Worker(new URL('./pose.worker.ts', import.meta.url), { type: 'module' });
     worker.current = poseWorker;
     poseWorker.onmessage = (event: MessageEvent) => {
       if (cancelled) return;
+      if (event.data.type === 'progress') setError('');
       if (event.data.type === 'ready') {
         live.current.ready = true;
         setModelReady(true);
+        setError((prev) => (prev.startsWith('姿态模型') ? '' : prev));
       }
       if (event.data.type === 'error') {
         live.current.frameBusy = false;
         live.current.ready = false;
         setModelReady(false);
-        live.current.running = false;
-        setRunning(false);
-        setError(
-          '姿态模型未就绪。本地请先运行 npm run prepare:models；GitHub Pages 部署时应已打包模型。' +
-            event.data.message,
-        );
+        setError('姿态模型未就绪：' + event.data.message);
       }
       if (event.data.type === 'pose') {
         live.current.frameBusy = false;
         points.current = event.data.points;
         worldPoints.current = event.data.worldPoints ?? [];
-        if (live.current.running) {
+        if (live.current.running && live.current.source !== 'simulation') {
           const result = engine.current.update(
             event.data.points,
             event.data.activeElapsedMs,
@@ -184,9 +181,29 @@ export default function App() {
     };
     const assetBase = new URL(import.meta.env.BASE_URL, location.href).href.replace(/\/$/, '');
     poseWorker.postMessage({ type: 'init', origin: assetBase || location.origin });
+    return () => {
+      cancelled = true;
+      poseWorker.terminate();
+      worker.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    live.current.source = sourceMode;
+    if (sourceMode === 'simulation') {
+      stream.current?.getTracks().forEach((track) => track.stop());
+      stream.current = null;
+      if (video.current) {
+        video.current.srcObject = null;
+      }
+      return;
+    }
+    points.current = [];
+    worldPoints.current = [];
     if (sourceMode === 'camera') {
+      let cancelled = false;
       navigator.mediaDevices
-        .getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
+        .getUserMedia({ video: { facingMode: 'user', width: 1280, height: 720 }, audio: false })
         .then((s) => {
           if (cancelled) {
             s.getTracks().forEach((t) => t.stop());
@@ -199,24 +216,13 @@ export default function App() {
           }
         })
         .catch((e) => {
-          if (!cancelled) {
-            setError('无法打开摄像头：' + String(e));
-            setSourceMode('simulation');
-          }
+          if (!cancelled) setError('无法打开摄像头：' + String(e));
         });
-    } else if (video.current && videoUrl.current) {
-      video.current.srcObject = null;
-      video.current.src = videoUrl.current;
-      video.current.load();
+      return () => {
+        cancelled = true;
+      };
     }
-    return () => {
-      cancelled = true;
-      poseWorker.terminate();
-      worker.current = null;
-      stream.current?.getTracks().forEach((t) => t.stop());
-      stream.current = null;
-      live.current.frameBusy = false;
-    };
+    attachVideo();
   }, [sourceMode]);
 
   useEffect(() => {
@@ -338,6 +344,15 @@ export default function App() {
       video.current.pause();
     }
   }
+  function attachVideo() {
+    const node = video.current;
+    if (!node || !videoUrl.current) return;
+    node.srcObject = null;
+    if (node.getAttribute('src') !== videoUrl.current) {
+      node.src = videoUrl.current;
+      node.load();
+    }
+  }
   function chooseSource(next: SourceMode) {
     live.current.running = false;
     setRunning(false);
@@ -349,24 +364,90 @@ export default function App() {
     if (videoUrl.current) URL.revokeObjectURL(videoUrl.current);
     videoUrl.current = URL.createObjectURL(file);
     setVideoName(file.name);
-    chooseSource('video');
+    setError('');
+    if (sourceMode === 'video') attachVideo();
+    else chooseSource('video');
+    requestAnimationFrame(attachVideo);
   }
-  function toggleRunning() {
-    if (sourceMode !== 'simulation' && (!modelReady || (sourceMode === 'camera' && !stream.current))) {
-      setError('请等待摄像头 / 视频与本地模型准备完成。');
+  async function toggleRunning() {
+    if (discomfort) {
+      setError('已报告不适，训练保持暂停。请结束本组查看报告。');
       return;
     }
     if (sourceMode === 'video' && !videoUrl.current) {
       setError('请先上传一段包含全身的训练视频。');
       return;
     }
-    if (discomfort) {
-      setError('已报告不适，训练保持暂停。请结束本组查看报告。');
-      return;
+    if (sourceMode === 'camera' && !stream.current) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: 1280, height: 720 },
+          audio: false,
+        });
+        stream.current = s;
+        if (video.current) {
+          video.current.srcObject = s;
+          await video.current.play();
+        }
+      } catch (e) {
+        setError('无法打开摄像头：' + String(e));
+        return;
+      }
+    }
+    if (sourceMode === 'video') {
+      attachVideo();
+      try {
+        await video.current?.play();
+      } catch {
+        setError('无法播放所选视频，请换一个常见编码的文件。');
+        return;
+      }
     }
     live.current.running = !live.current.running;
     setRunning(live.current.running);
     setError('');
+  }
+  async function confirmFood(query = foodQuery, amount = grams) {
+    if (!query.trim() && !customKcal) {
+      setFoodError('请先输入食物名称，或填写自定义热量。');
+      return;
+    }
+    setFoodBusy(true);
+    setFoodError('');
+    setShowFoodSuggest(false);
+    try {
+      const result = await request<{
+        total_kcal: number;
+        note: string;
+        items?: { name: string; grams: number; total_kcal?: number; kcal?: number; matched: boolean }[];
+      }>('/nutrition/estimate', {
+        method: 'POST',
+        body: JSON.stringify([
+          {
+            query,
+            grams: amount,
+            kcal_per_100g: customKcal ? Number(customKcal) : undefined,
+          },
+        ]),
+      });
+      const items = (result.items ?? []).map((item) => ({
+        name: item.name,
+        grams: item.grams,
+        total_kcal: item.total_kcal ?? item.kcal ?? 0,
+        matched: item.matched,
+      }));
+      setFoodResult({ ...result, items });
+      if (items[0] && (items[0].total_kcal > 0 || items[0].matched)) {
+        setMeal((prev) => [...prev, { name: items[0].name, grams: items[0].grams, total_kcal: items[0].total_kcal }]);
+        setMealConfirmed(false);
+      } else {
+        setFoodError(items[0]?.name ? '已匹配名称，但热量是 0。请改克数或填写自定义热量。' : '没有匹配到食物，请换个名称或填写自定义热量。');
+      }
+    } catch (e) {
+      setFoodError(String(e));
+    } finally {
+      setFoodBusy(false);
+    }
   }
   async function finish() {
     live.current.running = false;
@@ -449,8 +530,20 @@ export default function App() {
     activity,
     goal: 'habit',
   });
+  const liveBurn = sessionEnergy({
+    exercise,
+    weightKg: weight,
+    activeSeconds: Math.max(elapsed, metrics.reps * 2),
+    observableSeconds: Math.max(elapsed * 0.85, metrics.reps * 1.5),
+    reps: metrics.reps,
+    repDetails: metrics.squatReps,
+  });
   const sourceLabel =
     sourceMode === 'camera' ? '摄像头 · 本地姿态识别' : sourceMode === 'video' ? '上传视频 · 骨骼重定向' : '模拟动作回放 · 非真实测量';
+  const canStart =
+    sourceMode === 'simulation' ||
+    (sourceMode === 'video' && Boolean(videoUrl.current || videoName)) ||
+    sourceMode === 'camera';
 
   return (
     <div className="layout">
@@ -507,7 +600,7 @@ export default function App() {
             {apiReady ? '本地服务已连接' : '浏览器本地模式'}
           </span>
         </header>
-        {error && (
+        {tab === 'training' && error && (
           <div role="alert" className="alert">
             {error}
           </div>
@@ -563,7 +656,7 @@ export default function App() {
                       ? 'DEMO'
                       : modelReady
                         ? bodyModel.toUpperCase()
-                        : '模型准备中'}
+                        : '模型加载中，仍可先开始'}
                   </span>
                 </div>
                 <div className="dual-view">
@@ -666,7 +759,7 @@ export default function App() {
                 </div>
               </div>
               <div className="controls">
-                <button className="primary" disabled={busy} onClick={toggleRunning}>
+                <button className="primary" disabled={busy || !canStart} onClick={() => void toggleRunning()}>
                   {running ? <Pause size={17} /> : <Play size={17} />}{' '}
                   {running ? '暂停' : '开始 / 继续'}
                 </button>
@@ -759,13 +852,26 @@ export default function App() {
                 </label>
               </div>
               <div className="calorie-need">
-                <span>每日热量需求</span>
+                <span>每日热量需求（维持）</span>
                 <strong>
                   {daily.need_kcal}
                   <small> kcal</small>
                 </strong>
                 <p>
-                  BMR {daily.bmr_kcal} · TDEE {daily.tdee_kcal} · {daily.formula}
+                  BMR {daily.bmr_kcal} · TDEE {daily.tdee_kcal}。这是一天吃多少，不是这一组烧掉多少。
+                </p>
+              </div>
+              <div className="calorie-need session-burn">
+                <span>本组消耗估算</span>
+                <strong>
+                  {liveBurn.low_kcal}–{liveBurn.high_kcal}
+                  <small> kcal</small>
+                </strong>
+                <p>
+                  {weight}kg · {EXERCISES[exercise].name} {EXERCISES[exercise].met[0]}–
+                  {EXERCISES[exercise].met[1]} MET · {Math.max(0, Math.round(elapsed))} 秒。短组本来只有数
+                  kcal；一小时连续约 {Math.round(EXERCISES[exercise].met[0] * weight)}–
+                  {Math.round(EXERCISES[exercise].met[1] * weight)} kcal。
                 </p>
               </div>
               <label className="field-label" htmlFor="body-model">
@@ -946,7 +1052,7 @@ export default function App() {
                       : '本次来自摄像头记录。'}
                   {report.energy.note}{' '}
                   {report.energy.daily
-                    ? `每日需求约 ${report.energy.daily.need_kcal} kcal（BMR ${report.energy.daily.bmr_kcal}）。 `
+                    ? `每日维持需求约 ${report.energy.daily.need_kcal} kcal，和本组消耗不是同一个数。 `
                     : ''}
                   {report.energy.net_low_kcal != null
                     ? `本组净消耗 ${report.energy.net_low_kcal}–${report.energy.net_high_kcal} kcal。 `
@@ -1120,33 +1226,43 @@ export default function App() {
               <section className="panel">
                 <Leaf className="leaf-icon" size={30} />
                 <h3>添加食物</h3>
+                {foodError && (
+                  <p role="alert" className="alert">
+                    {foodError}
+                  </p>
+                )}
                 <label className="field-label food-search">
                   食物名称
                   <input
                     value={foodQuery}
                     placeholder="米饭、鸡蛋、宫保鸡丁、香蕉…"
+                    onFocus={() => setShowFoodSuggest(true)}
                     onChange={(e) => {
                       const value = e.target.value;
                       setFoodQuery(value);
+                      setShowFoodSuggest(true);
                       const local = estimateFoods([{ query: value, grams }]);
                       const hit = local.items[0];
                       if (hit.matched) setGrams(hit.grams);
                     }}
                   />
-                  {foodQuery.trim() && (
+                  {showFoodSuggest && foodQuery.trim() && (
                     <div className="food-suggest" role="listbox">
                       {searchFoods(foodQuery, 8).map(({ food, score }) => (
                         <button
                           key={food.id}
                           type="button"
+                          onMouseDown={(e) => e.preventDefault()}
                           onClick={() => {
                             setFoodQuery(food.name);
                             setGrams(food.unit_g);
+                            setShowFoodSuggest(false);
+                            void confirmFood(food.name, food.unit_g);
                           }}
                         >
                           <strong>{food.name}</strong>
                           <span>
-                            {food.kcal} kcal/100g · {food.group} · {score}
+                            {food.kcal} kcal/100g · {food.group} · 匹配 {score}
                           </span>
                         </button>
                       ))}
@@ -1177,59 +1293,23 @@ export default function App() {
                     onChange={(e) => setCustomKcal(e.target.value)}
                   />
                 </label>
-                <button
-                  className="primary"
-                  onClick={async () => {
-                    try {
-                      const payload = [
-                        {
-                          query: foodQuery,
-                          grams,
-                          kcal_per_100g: customKcal ? Number(customKcal) : undefined,
-                        },
-                      ];
-                      const result = await request<{
-                        total_kcal: number;
-                        note: string;
-                        items?: { name: string; grams: number; total_kcal?: number; kcal?: number; matched: boolean }[];
-                      }>('/nutrition/estimate', {
-                        method: 'POST',
-                        body: JSON.stringify(payload),
-                      });
-                      const items = (result.items ?? []).map((item) => ({
-                        name: item.name,
-                        grams: item.grams,
-                        total_kcal: item.total_kcal ?? item.kcal ?? 0,
-                        matched: item.matched,
-                      }));
-                      setFoodResult({ ...result, items });
-                      if (items[0]?.total_kcal) {
-                        setMeal((prev) => [...prev, { name: items[0].name, grams: items[0].grams, total_kcal: items[0].total_kcal }]);
-                      }
-                    } catch (e) {
-                      setError(String(e));
-                    }
-                  }}
-                >
-                  匹配并计入
+                <button className="primary" disabled={foodBusy} onClick={() => void confirmFood()}>
+                  {foodBusy ? '正在确认…' : '确认计入'}
                   <ArrowRight size={16} />
                 </button>
               </section>
               <section className="panel tinted">
                 <h3>记录结果</h3>
-                {foodResult ? (
+                {foodResult || meal.length ? (
                   <>
                     <div className="rep-number">
-                      {Math.round((meal.reduce((sum, item) => sum + item.total_kcal, 0) || foodResult.total_kcal) * 10) / 10}
+                      {Math.round(meal.reduce((sum, item) => sum + item.total_kcal, 0) * 10) / 10}
                       <span> kcal</span>
                     </div>
-                    <p>{foodResult.note}</p>
-                    {foodResult.items?.[0] && !foodResult.items[0].matched && (
-                      <p>未匹配到条目。改写名称，或填写自定义热量后再试。</p>
-                    )}
+                    <p>{foodResult?.note || '已按示例食物库估算。'}</p>
                   </>
                 ) : (
-                  <p>输入食物名称后显示匹配与估算。</p>
+                  <p>输入食物后点「确认计入」，或直接点下拉匹配项。</p>
                 )}
                 {meal.length > 0 && (
                   <ul className="meal-list">
@@ -1239,9 +1319,28 @@ export default function App() {
                           {item.name} · {item.grams}g
                         </span>
                         <strong>{item.total_kcal} kcal</strong>
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => setMeal((prev) => prev.filter((_, i) => i !== index))}
+                        >
+                          移除
+                        </button>
                       </li>
                     ))}
                   </ul>
+                )}
+                {meal.length > 0 && (
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setMealConfirmed(true);
+                      setShowFoodSuggest(false);
+                    }}
+                  >
+                    {mealConfirmed ? '本餐已确认' : '确认本餐记录'}
+                    <Check size={16} />
+                  </button>
                 )}
                 <p>
                   示例库覆盖主食、蛋白、乳制品、蔬菜、水果、饮品、零食和常见菜肴，按名称与别名匹配。不是营养处方。

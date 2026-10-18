@@ -384,17 +384,13 @@ h2 {
   position: relative;
 }
 .food-suggest {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% - 2px);
-  z-index: 8;
-  max-height: 240px;
+  position: static;
+  margin: 6px 0 10px;
+  max-height: 200px;
   overflow: auto;
   background: #fbfcf5;
   border: 1px solid var(--line);
   border-radius: 8px;
-  box-shadow: 0 10px 24px rgba(24, 63, 52, 0.08);
 }
 .food-suggest button,
 .food-suggest p {
@@ -422,10 +418,23 @@ h2 {
 .meal-list li {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
+}
+.text-button {
+  border: 0;
+  background: none;
+  color: #7f8b78;
+  padding: 0;
+  cursor: pointer;
+}
+.session-burn {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
 }
 input[type='text'],
 input[type='number'],

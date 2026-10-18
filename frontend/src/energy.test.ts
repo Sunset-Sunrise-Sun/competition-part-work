@@ -40,8 +40,9 @@ describe('energy', () => {
         },
       ],
     });
-    expect(energy.work_seconds).toBe(2);
-    expect(energy.rest_seconds).toBe(58);
+    expect(energy.work_seconds).toBeGreaterThanOrEqual(42);
+    expect(energy.rest_seconds).toBeLessThanOrEqual(18);
+    expect(energy.low_kcal).toBeGreaterThan(2);
     expect(energy.net_low_kcal).toBeLessThan(energy.low_kcal);
   });
 });
