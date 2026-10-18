@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .agents import analyze
+from .catalog import match_food, parse_query
 from .schemas import SessionSummary, AcceptProposal, FoodEntry
 from .storage import Storage
 from .local_llm import explain
@@ -86,17 +87,31 @@ def clear_history():
     return {"deleted": True}
 
 
-FOODS = {"rice": ("熟米饭", 130), "egg": ("鸡蛋", 143), "milk": ("全脂牛奶", 61), "broccoli": ("西兰花", 34)}
-
-
 @app.post("/api/nutrition/estimate")
 def nutrition(entries: list[FoodEntry]):
     if len(entries) > 100:
         raise HTTPException(422, "Too many entries")
-    items = [{"name": FOODS[x.food_id][0], "grams": x.grams,
-              "kcal": round(FOODS[x.food_id][1] * x.grams / 100, 1)} for x in entries]
+    items = []
+    for entry in entries:
+        food = match_food(entry.query, entry.food_id)
+        if food is None and entry.kcal_per_100g is None:
+            items.append({"name": entry.query or "未识别食物", "grams": entry.grams or 100,
+                          "kcal": 0, "matched": False})
+            continue
+        kcal_per = entry.kcal_per_100g if entry.kcal_per_100g is not None else food["kcal"]
+        _, parsed = parse_query(entry.query)
+        grams = entry.grams or parsed or (food["unit_g"] if food else 100)
+        items.append({
+            "name": food["name"] if food else entry.query or "自定义食物",
+            "food_id": food["id"] if food else None,
+            "grams": grams,
+            "kcal_per_100g": kcal_per,
+            "kcal": round(kcal_per * grams / 100, 1),
+            "matched": food is not None,
+        })
     return {"items": items, "total_kcal": round(sum(x["kcal"] for x in items), 1),
-            "data_status": "illustrative_unverified", "note": "示例数据，尚未完成食品条目及烹饪方式核验，仅供功能演示。"}
+            "data_status": "illustrative_unverified",
+            "note": "示例食物库按名称匹配，尚未完成烹饪方式核验，仅供功能演示。"}
 
 
 # Mount last so explicit API and OpenAPI routes retain priority.

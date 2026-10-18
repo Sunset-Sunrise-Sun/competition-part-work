@@ -1,14 +1,10 @@
+import { EXERCISES, type Exercise } from './catalog';
 import type { SquatRep } from './types';
 
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active';
 export type Sex = 'female' | 'male' | 'unspecified';
 
-const MET = {
-  squat: { work: [3.5, 5] as const, rest: 1.3, id: '02050', label: '抗阻/徒手力量，中等' },
-  jumping_jack: { work: [7, 8.3] as const, rest: 1.5, id: '02022', label: '开合跳' },
-  pull_up: { work: [8, 9.8] as const, rest: 1.8, id: '02054', label: '引体向上' },
-  jump_rope: { work: [8.8, 12.3] as const, rest: 1.8, id: '15552', label: '跳绳' },
-};
+const FALLBACK = { work: [4, 6] as const, rest: 1.5, id: '02000', label: '一般健身活动' };
 const PAL: Record<ActivityLevel, number> = {
   sedentary: 1.2,
   light: 1.375,
@@ -46,13 +42,14 @@ export function dailyRequirement(input: {
 }
 
 export function sessionEnergy(input: {
-  exercise: 'squat' | 'jumping_jack' | 'pull_up' | 'jump_rope';
+  exercise: Exercise;
   weightKg: number;
   activeSeconds: number;
   observableSeconds: number;
   repDetails?: SquatRep[];
 }) {
-  const spec = MET[input.exercise];
+  const item = EXERCISES[input.exercise];
+  const spec = item ? { work: item.met, rest: item.rest, id: item.id, label: item.name } : FALLBACK;
   let work = (input.repDetails ?? []).reduce((sum, r) => sum + r.descent_seconds + r.ascent_seconds, 0);
   if (work <= 0) work = Math.min(input.activeSeconds, input.observableSeconds * 0.7);
   work = Math.min(work, input.activeSeconds);

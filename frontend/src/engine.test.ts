@@ -82,6 +82,14 @@ describe('exercise engine', () => {
     ['jumping_jack', 3, 12],
     ['pull_up', 3, 12],
     ['jump_rope', 8, 45],
+    ['lunge', 3, 14],
+    ['push_up', 3, 14],
+    ['sit_up', 3, 14],
+    ['high_knees', 6, 45],
+    ['biceps_curl', 3, 16],
+    ['overhead_press', 3, 16],
+    ['plank', 1, 3],
+    ['boxing', 6, 45],
   ] as const)('counts complete %s cycles', (exercise, min, max) => {
     const engine = new ExerciseEngine(exercise);
     let result;

@@ -66,8 +66,9 @@ function localRequest<T>(path: string, options: RequestInit = {}): T {
     return { deleted: true } as T;
   }
   if (path === '/nutrition/estimate' && method === 'POST') {
-    const first = body?.[0] ?? { food_id: 'rice', grams: 150 };
-    return estimateFood(first.food_id, first.grams) as T;
+    const first = Array.isArray(body) ? body[0] : body;
+    const entry = first ?? { query: '米饭', grams: 150 };
+    return estimateFood(entry.query || entry.food_id || '', entry.grams, entry) as T;
   }
   throw new Error('当前为浏览器本地模式，该接口不可用。');
 }

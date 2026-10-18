@@ -1,4 +1,4 @@
-export type Exercise = 'squat' | 'jumping_jack' | 'pull_up' | 'jump_rope';
+export type { Exercise } from './catalog';
 export type SourceMode = 'simulation' | 'camera' | 'video';
 export type Point = { x: number; y: number; z?: number; visibility?: number };
 export type SquatRep = {

@@ -380,6 +380,54 @@ h2 {
   display: block;
   margin-bottom: 8px;
 }
+.food-search {
+  position: relative;
+}
+.food-suggest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% - 2px);
+  z-index: 8;
+  max-height: 240px;
+  overflow: auto;
+  background: #fbfcf5;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(24, 63, 52, 0.08);
+}
+.food-suggest button,
+.food-suggest p {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: none;
+  border: 0;
+  color: #34513e;
+}
+.food-suggest button span {
+  display: block;
+  font-size: 11px;
+  color: #7f8b78;
+}
+.food-suggest button:hover {
+  background: #eef3e4;
+}
+.meal-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.meal-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+input[type='text'],
 input[type='number'],
 select {
   border: 1px solid var(--line);

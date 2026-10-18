@@ -1,10 +1,12 @@
+import type { Exercise } from './catalog';
 import { dailyRequirement, sessionEnergy, type ActivityLevel, type Sex } from './energy';
+import { estimateFoods } from './foods';
 import type { Report, SquatRep } from './types';
 
 export type LocalSummary = {
   session_id: string;
   input_version: number;
-  exercise: 'squat' | 'jumping_jack' | 'pull_up' | 'jump_rope';
+  exercise: Exercise;
   source: 'simulation' | 'camera' | 'video';
   reps: number;
   active_seconds: number;
@@ -24,13 +26,6 @@ export type LocalSummary = {
     goal?: string;
   };
   rep_details?: SquatRep[];
-};
-
-const FOODS: Record<string, [string, number]> = {
-  rice: ['熟米饭', 130],
-  egg: ['鸡蛋', 143],
-  milk: ['全脂牛奶', 61],
-  broccoli: ['西兰花', 34],
 };
 
 const HISTORY_KEY = 'localfit-browser-history';
@@ -144,14 +139,12 @@ export function acceptLocal(report: Report): Report {
   return next;
 }
 
-export function estimateFood(foodId: string, grams: number) {
-  const item = FOODS[foodId];
-  if (!item) throw new Error('未知食品条目');
-  const total = Math.round((item[1] * grams) / 10) / 10;
-  return {
-    total_kcal: total,
-    note: '示例数据，尚未完成食品条目及烹饪方式核验，仅供功能演示。浏览器本地计算。',
-  };
+export function estimateFood(
+  query: string,
+  grams?: number,
+  extra?: { food_id?: string; kcal_per_100g?: number },
+) {
+  return estimateFoods([{ query, food_id: extra?.food_id, grams, kcal_per_100g: extra?.kcal_per_100g }]);
 }
 
 export function loadHistory(): Report[] {

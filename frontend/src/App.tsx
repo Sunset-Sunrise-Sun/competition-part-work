@@ -18,20 +18,15 @@ import {
   Upload,
   Users,
 } from 'lucide-react';
+import { EXERCISE_GROUPS, EXERCISE_IDS, EXERCISES, exerciseLabel, isExercise } from './catalog';
 import { ExerciseEngine, simulatedPose } from './engine';
 import { acceptReport, request } from './api';
 import { drawAvatar, drawRawPose, drawRetargetedOverlay, drawVideoFrame, syncCanvas } from './draw';
 import { dailyRequirement, type ActivityLevel, type Sex } from './energy';
+import { estimateFoods, searchFoods } from './foods';
 import { defaultProfile, retargetPose } from './smpl';
 import type { BodyModel } from './smpl';
 import type { Exercise, Metrics, Point, Report, SourceMode } from './types';
-
-const exerciseNames = {
-  squat: '深蹲 · 侧面机位',
-  jumping_jack: '开合跳 · 正面机位',
-  pull_up: '引体向上 · 正面抓杠',
-  jump_rope: '跳绳 · 正面或侧面',
-};
 const roleNames: Record<string, string> = {
   training_analyst: '训练分析',
   plan_adapter: '计划调整',
@@ -76,9 +71,16 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [apiReady, setApiReady] = useState(false);
-  const [food, setFood] = useState('rice');
+  const [exerciseQuery, setExerciseQuery] = useState('');
+  const [foodQuery, setFoodQuery] = useState('');
   const [grams, setGrams] = useState(150);
-  const [foodResult, setFoodResult] = useState<{ total_kcal: number; note: string } | null>(null);
+  const [customKcal, setCustomKcal] = useState('');
+  const [foodResult, setFoodResult] = useState<{
+    total_kcal: number;
+    note: string;
+    items?: { name: string; grams: number; total_kcal: number; matched: boolean }[];
+  } | null>(null);
+  const [meal, setMeal] = useState<{ name: string; grams: number; total_kcal: number }[]>([]);
   const [explanation, setExplanation] = useState('');
   const [videoName, setVideoName] = useState('');
   const video = useRef<HTMLVideoElement>(null);
@@ -598,20 +600,43 @@ export default function App() {
             </div>
             <section className="coach-card">
               <div className="card-kicker">YOUR TRAINING</div>
-              <label className="field-label" htmlFor="exercise">
+              <label className="field-label" htmlFor="exercise-search">
                 当前动作
               </label>
+              <input
+                id="exercise-search"
+                placeholder="搜索动作，如 深蹲 / 俯卧撑 / 波比"
+                disabled={running || busy}
+                value={exerciseQuery}
+                onChange={(e) => setExerciseQuery(e.target.value)}
+              />
               <select
                 id="exercise"
                 disabled={running || busy}
                 value={exercise}
-                onChange={(e) => setExercise(e.target.value as Exercise)}
+                onChange={(e) => {
+                  if (isExercise(e.target.value)) setExercise(e.target.value);
+                }}
               >
-                {Object.entries(exerciseNames).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
+                {EXERCISE_GROUPS.map((group) => {
+                  const q = exerciseQuery.trim().toLowerCase();
+                  const items = EXERCISE_IDS.filter((id) => {
+                    const item = EXERCISES[id];
+                    if (item.group !== group) return false;
+                    if (!q) return true;
+                    return item.name.includes(exerciseQuery) || id.includes(q) || exerciseLabel(id).includes(exerciseQuery);
+                  });
+                  if (!items.length) return null;
+                  return (
+                    <optgroup key={group} label={group}>
+                      {items.map((id) => (
+                        <option key={id} value={id}>
+                          {exerciseLabel(id)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
               </select>
               <div className="rep-number">
                 {metrics.reps}
@@ -819,8 +844,8 @@ export default function App() {
               <details>
                 <summary>实验参数与机位要求</summary>
                 <p>
-                  深蹲：侧面，髋膝踝可见。开合跳：正面，手脚同时打开收回。引体向上：正面抓杠，按躯干相对手腕升降计数（参考
-                  vision-demos）。跳绳：连续小跳，手腕在腰侧。
+                  {EXERCISES[exercise].hint} 当前共 {EXERCISE_IDS.length} 个动作。平板和靠墙静蹲按每 8
+                  秒计 1 次。
                 </p>
                 <label>
                   深蹲下降角度阈值（待验证）
@@ -1087,22 +1112,49 @@ export default function App() {
             <div className="section-top">
               <div>
                 <h2>一份食物，一次确认</h2>
-                <p>先实现可核对的记录，不从照片猜份量。</p>
+                <p>直接输入名称或别名，例如「米饭150克」「两个鸡蛋」「宫保鸡丁」。</p>
               </div>
-              <span className="badge">示例食品数据 · 未核验</span>
+              <span className="badge">示例食品库 · 可搜索匹配</span>
             </div>
             <div className="report-grid">
               <section className="panel">
                 <Leaf className="leaf-icon" size={30} />
                 <h3>添加食物</h3>
-                <label className="field-label">
-                  食物
-                  <select value={food} onChange={(e) => setFood(e.target.value)}>
-                    <option value="rice">熟米饭</option>
-                    <option value="egg">鸡蛋</option>
-                    <option value="milk">全脂牛奶</option>
-                    <option value="broccoli">西兰花</option>
-                  </select>
+                <label className="field-label food-search">
+                  食物名称
+                  <input
+                    value={foodQuery}
+                    placeholder="米饭、鸡蛋、宫保鸡丁、香蕉…"
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setFoodQuery(value);
+                      const local = estimateFoods([{ query: value, grams }]);
+                      const hit = local.items[0];
+                      if (hit.matched) setGrams(hit.grams);
+                    }}
+                  />
+                  {foodQuery.trim() && (
+                    <div className="food-suggest" role="listbox">
+                      {searchFoods(foodQuery, 8).map(({ food, score }) => (
+                        <button
+                          key={food.id}
+                          type="button"
+                          onClick={() => {
+                            setFoodQuery(food.name);
+                            setGrams(food.unit_g);
+                          }}
+                        >
+                          <strong>{food.name}</strong>
+                          <span>
+                            {food.kcal} kcal/100g · {food.group} · {score}
+                          </span>
+                        </button>
+                      ))}
+                      {searchFoods(foodQuery, 1).length === 0 && (
+                        <p>没有直接匹配。可填写下方每 100 克热量后估算。</p>
+                      )}
+                    </div>
+                  )}
                 </label>
                 <label className="field-label">
                   份量（克）
@@ -1114,22 +1166,52 @@ export default function App() {
                     onChange={(e) => setGrams(Number(e.target.value))}
                   />
                 </label>
+                <label className="field-label">
+                  自定义热量（kcal / 100g，可选）
+                  <input
+                    type="number"
+                    min="0"
+                    max="900"
+                    placeholder="未匹配时使用"
+                    value={customKcal}
+                    onChange={(e) => setCustomKcal(e.target.value)}
+                  />
+                </label>
                 <button
                   className="primary"
                   onClick={async () => {
                     try {
-                      setFoodResult(
-                        await request('/nutrition/estimate', {
-                          method: 'POST',
-                          body: JSON.stringify([{ food_id: food, grams }]),
-                        }),
-                      );
+                      const payload = [
+                        {
+                          query: foodQuery,
+                          grams,
+                          kcal_per_100g: customKcal ? Number(customKcal) : undefined,
+                        },
+                      ];
+                      const result = await request<{
+                        total_kcal: number;
+                        note: string;
+                        items?: { name: string; grams: number; total_kcal?: number; kcal?: number; matched: boolean }[];
+                      }>('/nutrition/estimate', {
+                        method: 'POST',
+                        body: JSON.stringify(payload),
+                      });
+                      const items = (result.items ?? []).map((item) => ({
+                        name: item.name,
+                        grams: item.grams,
+                        total_kcal: item.total_kcal ?? item.kcal ?? 0,
+                        matched: item.matched,
+                      }));
+                      setFoodResult({ ...result, items });
+                      if (items[0]?.total_kcal) {
+                        setMeal((prev) => [...prev, { name: items[0].name, grams: items[0].grams, total_kcal: items[0].total_kcal }]);
+                      }
                     } catch (e) {
                       setError(String(e));
                     }
                   }}
                 >
-                  计算示例能量
+                  匹配并计入
                   <ArrowRight size={16} />
                 </button>
               </section>
@@ -1138,17 +1220,31 @@ export default function App() {
                 {foodResult ? (
                   <>
                     <div className="rep-number">
-                      {foodResult.total_kcal}
+                      {Math.round((meal.reduce((sum, item) => sum + item.total_kcal, 0) || foodResult.total_kcal) * 10) / 10}
                       <span> kcal</span>
                     </div>
                     <p>{foodResult.note}</p>
+                    {foodResult.items?.[0] && !foodResult.items[0].matched && (
+                      <p>未匹配到条目。改写名称，或填写自定义热量后再试。</p>
+                    )}
                   </>
                 ) : (
-                  <p>选择食物并确认份量后显示计算结果。</p>
+                  <p>输入食物名称后显示匹配与估算。</p>
+                )}
+                {meal.length > 0 && (
+                  <ul className="meal-list">
+                    {meal.map((item, index) => (
+                      <li key={`${item.name}-${index}`}>
+                        <span>
+                          {item.name} · {item.grams}g
+                        </span>
+                        <strong>{item.total_kcal} kcal</strong>
+                      </li>
+                    ))}
+                  </ul>
                 )}
                 <p>
-                  正式数据层需记录食品 ID、来源、每 100g
-                  数值、烹饪方式和许可。本原型尚未提供完整营养处方或饮食规划。
+                  示例库覆盖主食、蛋白、乳制品、蔬菜、水果、饮品、零食和常见菜肴，按名称与别名匹配。不是营养处方。
                 </p>
               </section>
             </div>

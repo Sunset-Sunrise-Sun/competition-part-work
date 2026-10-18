@@ -1,12 +1,7 @@
 """Session and daily energy estimates. Scenario ranges, not measured values."""
 from __future__ import annotations
 
-MET = {
-    "squat": {"work": (3.5, 5.0), "rest": 1.3, "id": "02050", "label": "抗阻/徒手力量，中等"},
-    "jumping_jack": {"work": (7.0, 8.3), "rest": 1.5, "id": "02022", "label": "开合跳"},
-    "pull_up": {"work": (8.0, 9.8), "rest": 1.8, "id": "02054", "label": "引体向上"},
-    "jump_rope": {"work": (8.8, 12.3), "rest": 1.8, "id": "15552", "label": "跳绳"},
-}
+from .catalog import MET, MET_DEFAULT
 PAL = {"sedentary": 1.2, "light": 1.375, "moderate": 1.55, "active": 1.725}
 
 
@@ -38,7 +33,7 @@ def daily_requirement(profile) -> dict:
 
 def session_energy(exercise: str, weight_kg: float, active_seconds: float,
                    observable_seconds: float, rep_details: list) -> dict:
-    spec = MET[exercise]
+    spec = MET.get(exercise, MET_DEFAULT)
     work = 0.0
     for rep in rep_details:
         work += getattr(rep, "descent_seconds", 0) + getattr(rep, "ascent_seconds", 0)

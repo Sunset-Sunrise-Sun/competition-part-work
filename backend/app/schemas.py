@@ -1,6 +1,8 @@
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
+from .catalog import EXERCISE_IDS
+
 
 class Profile(BaseModel):
     weight_kg: float = Field(default=65, ge=30, le=250)
@@ -38,7 +40,7 @@ class SquatRep(BaseModel):
 class SessionSummary(BaseModel):
     session_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     input_version: int = Field(default=1, ge=1)
-    exercise: Literal["squat", "jumping_jack", "pull_up", "jump_rope"]
+    exercise: str = Field(min_length=2, max_length=40)
     source: Literal["simulation", "camera", "video"]
     reps: int = Field(ge=0, le=10000)
     active_seconds: float = Field(ge=0, le=86400)
@@ -53,6 +55,8 @@ class SessionSummary(BaseModel):
 
     @model_validator(mode="after")
     def coherent_reps(self):
+        if self.exercise not in EXERCISE_IDS:
+            raise ValueError("Unknown exercise")
         if self.rep_details and self.exercise != "squat":
             raise ValueError("Rep details currently support squat only")
         previous_end = -1.0
@@ -69,5 +73,13 @@ class AcceptProposal(BaseModel):
 
 
 class FoodEntry(BaseModel):
-    food_id: Literal["rice", "egg", "milk", "broccoli"]
-    grams: float = Field(ge=1, le=3000)
+    query: str = Field(default="", max_length=80)
+    food_id: str = Field(default="", max_length=40)
+    grams: float | None = Field(default=None, ge=1, le=3000)
+    kcal_per_100g: float | None = Field(default=None, ge=0, le=900)
+
+    @model_validator(mode="after")
+    def has_identity(self):
+        if not self.query and not self.food_id and self.kcal_per_100g is None:
+            raise ValueError("Need query, food_id or custom kcal")
+        return self
