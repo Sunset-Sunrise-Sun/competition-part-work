@@ -94,6 +94,19 @@ export default function App() {
   const stream = useRef<MediaStream | null>(null);
   const videoUrl = useRef('');
   const worker = useRef<Worker | null>(null);
+  const poseMain = useRef<{
+    detectForVideo: (
+      image: HTMLVideoElement | ImageBitmap,
+      timestamp: number,
+    ) => {
+      landmarks: Point[][];
+      worldLandmarks: Point[][];
+    };
+    close?: () => void;
+  } | null>(null);
+  const ingestPose = useRef<(data: { points: Point[]; worldPoints?: Point[]; activeElapsedMs: number; aspectRatio?: number }) => void>(
+    () => {},
+  );
   const points = useRef<Point[]>([]);
   const worldPoints = useRef<Point[]>([]);
   const engine = useRef(new ExerciseEngine('squat'));
@@ -144,47 +157,98 @@ export default function App() {
     setExplanation('');
   }, [exercise, threshold, sourceMode]);
 
+  ingestPose.current = (data) => {
+    live.current.frameBusy = false;
+    points.current = data.points;
+    worldPoints.current = data.worldPoints ?? [];
+    if (live.current.running && live.current.source !== 'simulation') {
+      const result = engine.current.update(data.points, data.activeElapsedMs, data.aspectRatio);
+      metricRef.current = result;
+      live.current.quality = result.quality;
+      live.current.lastPose = performance.now();
+      setMetrics(result);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
-    const poseWorker = new Worker(new URL('./pose.worker.ts', import.meta.url), { type: 'module' });
-    worker.current = poseWorker;
-    poseWorker.onmessage = (event: MessageEvent) => {
+    let fallbackStarted = false;
+    let poseWorker: Worker | null = null;
+    const assetBase = new URL(import.meta.env.BASE_URL, location.href).href.replace(/\/$/, '');
+    const origin = assetBase || location.origin;
+
+    const markReady = () => {
       if (cancelled) return;
-      if (event.data.type === 'progress') setError('');
-      if (event.data.type === 'ready') {
-        live.current.ready = true;
-        setModelReady(true);
-        setError((prev) => (prev.startsWith('姿态模型') ? '' : prev));
-      }
-      if (event.data.type === 'error') {
+      live.current.ready = true;
+      setModelReady(true);
+      setError((prev) => (prev.startsWith('姿态模型') ? '' : prev));
+    };
+    const startMainThread = async () => {
+      try {
+        const { createPoseLandmarker } = await import('./pose');
+        const model = await createPoseLandmarker(origin, () => {
+          if (!cancelled) setError('');
+        });
+        if (cancelled) {
+          model.close();
+          return;
+        }
+        poseMain.current = model;
+        markReady();
+      } catch (error) {
+        if (cancelled) return;
         live.current.frameBusy = false;
         live.current.ready = false;
         setModelReady(false);
-        setError('姿态模型未就绪：' + event.data.message);
-      }
-      if (event.data.type === 'pose') {
-        live.current.frameBusy = false;
-        points.current = event.data.points;
-        worldPoints.current = event.data.worldPoints ?? [];
-        if (live.current.running && live.current.source !== 'simulation') {
-          const result = engine.current.update(
-            event.data.points,
-            event.data.activeElapsedMs,
-            event.data.aspectRatio,
-          );
-          metricRef.current = result;
-          live.current.quality = result.quality;
-          live.current.lastPose = performance.now();
-          setMetrics(result);
-        }
+        setError('姿态模型未就绪：' + String(error));
       }
     };
-    const assetBase = new URL(import.meta.env.BASE_URL, location.href).href.replace(/\/$/, '');
-    poseWorker.postMessage({ type: 'init', origin: assetBase || location.origin });
+    const abandonWorker = () => {
+      poseWorker?.terminate();
+      poseWorker = null;
+      worker.current = null;
+    };
+    const startMainThreadOnce = () => {
+      if (fallbackStarted || cancelled || live.current.ready) return;
+      fallbackStarted = true;
+      abandonWorker();
+      setError('姿态模型改在页面内加载…');
+      void startMainThread();
+    };
+
+    try {
+      // Classic IIFE worker: MediaPipe's WASM loader calls importScripts, which
+      // does not exist in `{ type: 'module' }` workers.
+      poseWorker = new Worker(new URL('./pose.worker.ts', import.meta.url));
+      worker.current = poseWorker;
+      poseWorker.onmessage = (event: MessageEvent) => {
+        if (cancelled) return;
+        if (event.data.type === 'progress') setError('');
+        if (event.data.type === 'ready') markReady();
+        if (event.data.type === 'error') {
+          live.current.frameBusy = false;
+          if (!live.current.ready) {
+            startMainThreadOnce();
+            return;
+          }
+          setError('姿态识别中断：' + event.data.message);
+        }
+        if (event.data.type === 'pose') ingestPose.current(event.data);
+      };
+      poseWorker.onerror = () => {
+        startMainThreadOnce();
+      };
+      poseWorker.postMessage({ type: 'init', origin });
+    } catch {
+      startMainThreadOnce();
+    }
+
     return () => {
       cancelled = true;
-      poseWorker.terminate();
+      poseWorker?.terminate();
       worker.current = null;
+      poseMain.current?.close?.();
+      poseMain.current = null;
     };
   }, []);
 
@@ -260,7 +324,8 @@ export default function App() {
         setElapsed(live.current.elapsed);
         if (live.current.source === 'simulation') setMetrics(metricRef.current);
         const v = video.current,
-          currentWorker = worker.current;
+          currentWorker = worker.current,
+          mainModel = poseMain.current;
         if (
           live.current.running &&
           live.current.source !== 'simulation' &&
@@ -268,29 +333,45 @@ export default function App() {
           v &&
           v.readyState >= 2 &&
           !live.current.frameBusy &&
-          currentWorker
+          (currentWorker || mainModel)
         ) {
           live.current.frameBusy = true;
-          createImageBitmap(v)
-            .then((bitmap) => {
-              if (worker.current !== currentWorker || !live.current.running) {
-                bitmap.close();
-                live.current.frameBusy = false;
-                return;
-              }
-              currentWorker.postMessage(
-                {
-                  type: 'frame',
-                  bitmap,
-                  timestamp: now,
-                  activeElapsedMs: live.current.elapsed * 1000,
-                },
-                [bitmap],
-              );
-            })
-            .catch(() => {
+          if (mainModel && !currentWorker) {
+            try {
+              const result = mainModel.detectForVideo(v, now);
+              ingestPose.current({
+                points: result.landmarks[0] ?? [],
+                worldPoints: result.worldLandmarks[0] ?? [],
+                activeElapsedMs: live.current.elapsed * 1000,
+                aspectRatio: v.videoWidth / Math.max(v.videoHeight, 1),
+              });
+            } catch {
               live.current.frameBusy = false;
-            });
+            }
+          } else if (currentWorker) {
+            createImageBitmap(v)
+              .then((bitmap) => {
+                if (worker.current !== currentWorker || !live.current.running) {
+                  bitmap.close();
+                  live.current.frameBusy = false;
+                  return;
+                }
+                currentWorker.postMessage(
+                  {
+                    type: 'frame',
+                    bitmap,
+                    timestamp: now,
+                    activeElapsedMs: live.current.elapsed * 1000,
+                  },
+                  [bitmap],
+                );
+              })
+              .catch(() => {
+                live.current.frameBusy = false;
+              });
+          } else {
+            live.current.frameBusy = false;
+          }
         }
         const p = points.current;
         const aspect =
