@@ -1,5 +1,6 @@
 """Typed, deterministic agent workflow baseline. No external model is required."""
 from datetime import datetime, timezone
+from .energy import daily_requirement, session_energy
 from .schemas import SessionSummary
 
 
@@ -43,13 +44,11 @@ def analyze(summary: SessionSummary) -> dict:
     record("safety_gate", {"blocked": blocked, "target_reps": target, "rest_seconds": rest},
            "阻止继续训练。" if blocked else "候选计划通过预设规则，等待用户确认。")
 
-    # Scenario assumptions, not calibrated prediction intervals or per-person measurements.
-    met_low, met_high = ((3.5, 5.0) if summary.exercise == "squat" else (5.0, 8.0))
-    hours = summary.active_seconds / 3600
-    energy = {"low_kcal": round(met_low * summary.profile.weight_kg * hours, 1),
-              "high_kcal": round(met_high * summary.profile.weight_kg * hours, 1),
-              "met_low": met_low, "met_high": met_high, "kind": "gross_scenario_estimate",
-              "note": "演示用 MET 假设范围，包含静息消耗；不是测量值或统计置信区间。"}
+    energy = {
+        **session_energy(summary.exercise, summary.profile.weight_kg, summary.active_seconds,
+                         summary.observable_seconds, summary.rep_details),
+        "daily": daily_requirement(summary.profile),
+    }
     record("reporter", {"source": summary.source, "energy": energy}, "生成可追踪摘要，不推断医疗状态。")
     return {"session_id": summary.session_id, "input_version": summary.input_version,
             "source": summary.source, "coverage": round(coverage, 3), "completion": round(completion, 3),

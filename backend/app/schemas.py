@@ -4,6 +4,14 @@ from pydantic import BaseModel, Field, model_validator
 
 class Profile(BaseModel):
     weight_kg: float = Field(default=65, ge=30, le=250)
+    height_cm: float = Field(default=170, ge=120, le=220)
+    age_years: float = Field(default=22, ge=14, le=80)
+    sex: Literal["female", "male", "unspecified"] = "unspecified"
+    activity: Literal["sedentary", "light", "moderate", "active"] = "light"
+    muscle_upper: float = Field(default=0.45, ge=0, le=1)
+    muscle_core: float = Field(default=0.4, ge=0, le=1)
+    muscle_lower: float = Field(default=0.45, ge=0, le=1)
+    body_model: Literal["smpl", "smplx"] = "smpl"
     experience: Literal["beginner", "regular"] = "beginner"
     goal: Literal["habit", "fitness"] = "habit"
 
@@ -30,8 +38,8 @@ class SquatRep(BaseModel):
 class SessionSummary(BaseModel):
     session_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     input_version: int = Field(default=1, ge=1)
-    exercise: Literal["squat", "jumping_jack"]
-    source: Literal["simulation", "camera"]
+    exercise: Literal["squat", "jumping_jack", "pull_up", "jump_rope"]
+    source: Literal["simulation", "camera", "video"]
     reps: int = Field(ge=0, le=10000)
     active_seconds: float = Field(ge=0, le=86400)
     observable_seconds: float = Field(ge=0, le=86400)

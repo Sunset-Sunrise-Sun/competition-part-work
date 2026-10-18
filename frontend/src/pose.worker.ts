@@ -6,10 +6,11 @@ self.onmessage = (event: MessageEvent) => {
   chain = chain.then(async () => {
     try {
       if (data.type === 'init') {
-        const vision = await FilesetResolver.forVisionTasks(data.origin + '/wasm');
+        const base = String(data.origin || '').replace(/\/$/, '');
+        const vision = await FilesetResolver.forVisionTasks(base + '/wasm');
         model = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: data.origin + '/models/pose_landmarker_lite.task',
+            modelAssetPath: base + '/models/pose_landmarker_lite.task',
             delegate: 'CPU',
           },
           runningMode: 'VIDEO',
@@ -23,6 +24,7 @@ self.onmessage = (event: MessageEvent) => {
           self.postMessage({
             type: 'pose',
             points: result.landmarks[0] ?? [],
+            worldPoints: result.worldLandmarks[0] ?? [],
             timestamp: data.timestamp,
             activeElapsedMs: data.activeElapsedMs,
             aspectRatio: data.bitmap.width / data.bitmap.height,

@@ -15,13 +15,23 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  Upload,
   Users,
 } from 'lucide-react';
 import { ExerciseEngine, simulatedPose } from './engine';
 import { acceptReport, request } from './api';
-import type { Exercise, Metrics, Point, Report } from './types';
+import { drawAvatar, drawRawPose, drawRetargetedOverlay, drawVideoFrame, syncCanvas } from './draw';
+import { dailyRequirement, type ActivityLevel, type Sex } from './energy';
+import { defaultProfile, retargetPose } from './smpl';
+import type { BodyModel } from './smpl';
+import type { Exercise, Metrics, Point, Report, SourceMode } from './types';
 
-const exerciseNames = { squat: '深蹲 · 侧面机位', jumping_jack: '开合跳 · 正面机位' };
+const exerciseNames = {
+  squat: '深蹲 · 侧面机位',
+  jumping_jack: '开合跳 · 正面机位',
+  pull_up: '引体向上 · 正面抓杠',
+  jump_rope: '跳绳 · 正面或侧面',
+};
 const roleNames: Record<string, string> = {
   training_analyst: '训练分析',
   plan_adapter: '计划调整',
@@ -37,30 +47,25 @@ const emptyMetrics: Metrics = {
   events: 0,
   squatReps: [],
 };
-const connections = [
-  [11, 12],
-  [11, 13],
-  [13, 15],
-  [12, 14],
-  [14, 16],
-  [11, 23],
-  [12, 24],
-  [23, 24],
-  [23, 25],
-  [25, 27],
-  [24, 26],
-  [26, 28],
-];
 
 export default function App() {
   const [tab, setTab] = useState('training');
   const [exercise, setExercise] = useState<Exercise>('squat');
-  const [camera, setCamera] = useState(false);
+  const [sourceMode, setSourceMode] = useState<SourceMode>('simulation');
   const [modelReady, setModelReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [metrics, setMetrics] = useState<Metrics>(emptyMetrics);
   const [elapsed, setElapsed] = useState(0);
   const [weight, setWeight] = useState(65);
+  const [height, setHeight] = useState(170);
+  const [age, setAge] = useState(22);
+  const [sex, setSex] = useState<Sex>('unspecified');
+  const [activity, setActivity] = useState<ActivityLevel>('light');
+  const [muscleUpper, setMuscleUpper] = useState(0.45);
+  const [muscleCore, setMuscleCore] = useState(0.4);
+  const [muscleLower, setMuscleLower] = useState(0.45);
+  const [bodyModel, setBodyModel] = useState<BodyModel>('smpl');
+  const [showRaw, setShowRaw] = useState(true);
   const [target, setTarget] = useState(12);
   const [threshold, setThreshold] = useState(105);
   const [fatigue, setFatigue] = useState(4);
@@ -75,15 +80,20 @@ export default function App() {
   const [grams, setGrams] = useState(150);
   const [foodResult, setFoodResult] = useState<{ total_kcal: number; note: string } | null>(null);
   const [explanation, setExplanation] = useState('');
+  const [videoName, setVideoName] = useState('');
   const video = useRef<HTMLVideoElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const avatar = useRef<HTMLCanvasElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const stream = useRef<MediaStream | null>(null);
+  const videoUrl = useRef('');
   const worker = useRef<Worker | null>(null);
   const points = useRef<Point[]>([]);
+  const worldPoints = useRef<Point[]>([]);
   const engine = useRef(new ExerciseEngine('squat'));
   const live = useRef({
     running: false,
-    camera: false,
+    source: 'simulation' as SourceMode,
     ready: false,
     elapsed: 0,
     observable: 0,
@@ -92,15 +102,30 @@ export default function App() {
     frameBusy: false,
   });
   const metricRef = useRef(emptyMetrics);
+  const profileRef = useRef(defaultProfile());
+  const showRawRef = useRef(true);
 
   useEffect(() => {
-    request('/health')
-      .then(() => setApiReady(true))
+    fetch('/api/health', { signal: AbortSignal.timeout(4000) })
+      .then((r) => setApiReady(r.ok))
       .catch(() => setApiReady(false));
   }, []);
   useEffect(() => {
     live.current.running = running;
   }, [running]);
+  useEffect(() => {
+    profileRef.current = defaultProfile({
+      heightCm: height,
+      weightKg: weight,
+      muscleUpper,
+      muscleCore,
+      muscleLower,
+      model: bodyModel,
+    });
+  }, [height, weight, muscleUpper, muscleCore, muscleLower, bodyModel]);
+  useEffect(() => {
+    showRawRef.current = showRaw;
+  }, [showRaw]);
   useEffect(() => {
     engine.current = new ExerciseEngine(exercise, threshold);
     live.current.elapsed = 0;
@@ -111,13 +136,13 @@ export default function App() {
     setElapsed(0);
     setReport(null);
     setExplanation('');
-  }, [exercise, threshold, camera]);
+  }, [exercise, threshold, sourceMode]);
 
   useEffect(() => {
-    live.current.camera = camera;
+    live.current.source = sourceMode;
     live.current.ready = false;
     setModelReady(false);
-    if (!camera) return;
+    if (sourceMode === 'simulation') return;
     let cancelled = false;
     const poseWorker = new Worker(new URL('./pose.worker.ts', import.meta.url), { type: 'module' });
     worker.current = poseWorker;
@@ -134,13 +159,14 @@ export default function App() {
         live.current.running = false;
         setRunning(false);
         setError(
-          '摄像头模型未就绪。请先运行 npm run prepare:models，并查看浏览器控制台。' +
+          '姿态模型未就绪。本地请先运行 npm run prepare:models；GitHub Pages 部署时应已打包模型。' +
             event.data.message,
         );
       }
       if (event.data.type === 'pose') {
         live.current.frameBusy = false;
         points.current = event.data.points;
+        worldPoints.current = event.data.worldPoints ?? [];
         if (live.current.running) {
           const result = engine.current.update(
             event.data.points,
@@ -154,26 +180,33 @@ export default function App() {
         }
       }
     };
-    poseWorker.postMessage({ type: 'init', origin: location.origin });
-    navigator.mediaDevices
-      .getUserMedia({ video: { width: 640, height: 480 }, audio: false })
-      .then((s) => {
-        if (cancelled) {
-          s.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        stream.current = s;
-        if (video.current) {
-          video.current.srcObject = s;
-          video.current.play().catch(() => setError('请允许浏览器播放摄像头画面。'));
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError('无法打开摄像头：' + String(e));
-          setCamera(false);
-        }
-      });
+    const assetBase = new URL(import.meta.env.BASE_URL, location.href).href.replace(/\/$/, '');
+    poseWorker.postMessage({ type: 'init', origin: assetBase || location.origin });
+    if (sourceMode === 'camera') {
+      navigator.mediaDevices
+        .getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
+        .then((s) => {
+          if (cancelled) {
+            s.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          stream.current = s;
+          if (video.current) {
+            video.current.srcObject = s;
+            video.current.play().catch(() => setError('请允许浏览器播放摄像头画面。'));
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setError('无法打开摄像头：' + String(e));
+            setSourceMode('simulation');
+          }
+        });
+    } else if (video.current && videoUrl.current) {
+      video.current.srcObject = null;
+      video.current.src = videoUrl.current;
+      video.current.load();
+    }
     return () => {
       cancelled = true;
       poseWorker.terminate();
@@ -182,7 +215,14 @@ export default function App() {
       stream.current = null;
       live.current.frameBusy = false;
     };
-  }, [camera]);
+  }, [sourceMode]);
+
+  useEffect(() => {
+    const node = video.current;
+    if (!node || sourceMode !== 'video') return;
+    if (running) node.play().catch(() => setError('无法播放所选视频，请换一个常见编码的文件。'));
+    else node.pause();
+  }, [running, sourceMode]);
 
   useEffect(() => {
     let frame = 0,
@@ -193,8 +233,9 @@ export default function App() {
       last = now;
       if (live.current.running) {
         live.current.elapsed += dt;
-        if (!live.current.camera) {
+        if (live.current.source === 'simulation') {
           points.current = simulatedPose(live.current.elapsed * 1000, exercise);
+          worldPoints.current = [];
           const result = engine.current.update(points.current, live.current.elapsed * 1000);
           metricRef.current = result;
           live.current.quality = result.quality;
@@ -202,18 +243,19 @@ export default function App() {
         }
         if (live.current.quality && now - live.current.lastPose < 500)
           live.current.observable += dt;
-      } else if (!live.current.camera) {
+      } else if (live.current.source === 'simulation') {
         points.current = simulatedPose(live.current.elapsed * 1000, exercise);
+        worldPoints.current = [];
       }
       if (now - lastDraw > 80) {
         lastDraw = now;
         setElapsed(live.current.elapsed);
-        if (!live.current.camera) setMetrics(metricRef.current);
+        if (live.current.source === 'simulation') setMetrics(metricRef.current);
         const v = video.current,
           currentWorker = worker.current;
         if (
           live.current.running &&
-          live.current.camera &&
+          live.current.source !== 'simulation' &&
           live.current.ready &&
           v &&
           v.readyState >= 2 &&
@@ -242,29 +284,32 @@ export default function App() {
               live.current.frameBusy = false;
             });
         }
-        const c = canvas.current,
-          ctx = c?.getContext('2d');
-        if (c && ctx) {
-          ctx.clearRect(0, 0, c.width, c.height);
-          const p = points.current;
-          ctx.lineWidth = 5;
-          ctx.strokeStyle = live.current.camera ? '#c9f483' : '#badd8b';
-          for (const [a, b] of connections) {
-            if (p[a] && p[b] && (p[a].visibility ?? 0) > 0.5 && (p[b].visibility ?? 0) > 0.5) {
-              ctx.beginPath();
-              ctx.moveTo(p[a].x * c.width, p[a].y * c.height);
-              ctx.lineTo(p[b].x * c.width, p[b].y * c.height);
-              ctx.stroke();
-            }
+        const p = points.current;
+        const aspect =
+          v && v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 4 / 3;
+        const retargeted = p.length
+          ? retargetPose(p, worldPoints.current, aspect, profileRef.current)
+          : null;
+        const overlay = canvas.current;
+        if (overlay) {
+          const { width, height } = syncCanvas(overlay);
+          const ctx = overlay.getContext('2d');
+          if (ctx) {
+            const rect = drawVideoFrame(
+              ctx,
+              live.current.source === 'simulation' ? null : v,
+              width,
+              height,
+            );
+            if (showRawRef.current && p.length) drawRawPose(ctx, p, rect);
+            if (retargeted) drawRetargetedOverlay(ctx, retargeted, rect);
           }
-          for (const i of new Set(connections.flat())) {
-            if (p[i] && (p[i].visibility ?? 0) > 0.5) {
-              ctx.beginPath();
-              ctx.arc(p[i].x * c.width, p[i].y * c.height, 6, 0, Math.PI * 2);
-              ctx.fillStyle = '#f4f7ea';
-              ctx.fill();
-            }
-          }
+        }
+        const body = avatar.current;
+        if (body && retargeted) {
+          const { width, height } = syncCanvas(body);
+          const ctx = body.getContext('2d');
+          if (ctx) drawAvatar(ctx, retargeted, width, height, 0.32 + Math.sin(now / 1800) * 0.18);
         }
       }
       frame = requestAnimationFrame(loop);
@@ -286,10 +331,31 @@ export default function App() {
     setReport(null);
     setExplanation('');
     setError('');
+    if (video.current && sourceMode === 'video') {
+      video.current.currentTime = 0;
+      video.current.pause();
+    }
+  }
+  function chooseSource(next: SourceMode) {
+    live.current.running = false;
+    setRunning(false);
+    setSourceMode(next);
+    setError('');
+  }
+  function onVideoFile(file?: File) {
+    if (!file) return;
+    if (videoUrl.current) URL.revokeObjectURL(videoUrl.current);
+    videoUrl.current = URL.createObjectURL(file);
+    setVideoName(file.name);
+    chooseSource('video');
   }
   function toggleRunning() {
-    if (camera && (!modelReady || !stream.current)) {
-      setError('请等待摄像头与本地模型准备完成。');
+    if (sourceMode !== 'simulation' && (!modelReady || (sourceMode === 'camera' && !stream.current))) {
+      setError('请等待摄像头 / 视频与本地模型准备完成。');
+      return;
+    }
+    if (sourceMode === 'video' && !videoUrl.current) {
+      setError('请先上传一段包含全身的训练视频。');
       return;
     }
     if (discomfort) {
@@ -312,7 +378,7 @@ export default function App() {
           session_id: crypto.randomUUID(),
           input_version: 1,
           exercise,
-          source: camera ? 'camera' : 'simulation',
+          source: sourceMode,
           reps: metricRef.current.reps,
           active_seconds: live.current.elapsed,
           observable_seconds: Math.min(live.current.observable, live.current.elapsed),
@@ -322,7 +388,19 @@ export default function App() {
           discomfort,
           target_reps: target,
           persist,
-          profile: { weight_kg: weight, experience: 'beginner', goal: 'habit' },
+          profile: {
+            weight_kg: weight,
+            height_cm: height,
+            age_years: age,
+            sex,
+            activity,
+            muscle_upper: muscleUpper,
+            muscle_core: muscleCore,
+            muscle_lower: muscleLower,
+            body_model: bodyModel,
+            experience: 'beginner',
+            goal: 'habit',
+          },
         }),
       });
       setReport(result);
@@ -361,6 +439,16 @@ export default function App() {
     ['team', '项目协作', Users],
   ] as const;
   const progress = Math.min(100, (metrics.reps / target) * 100);
+  const daily = dailyRequirement({
+    weightKg: weight,
+    heightCm: height,
+    ageYears: age,
+    sex,
+    activity,
+    goal: 'habit',
+  });
+  const sourceLabel =
+    sourceMode === 'camera' ? '摄像头 · 本地姿态识别' : sourceMode === 'video' ? '上传视频 · 骨骼重定向' : '模拟动作回放 · 非真实测量';
 
   return (
     <div className="layout">
@@ -410,11 +498,11 @@ export default function App() {
                     ? '记录饮食，从确认份量开始。'
                     : '把想法，变成共同的进度。'}
             </h1>
-            <p>居家运动 · 实时反馈 · 可解释的教练协作</p>
+            <p>居家运动 · SMPL 骨骼重定向 · 可解释的教练协作</p>
           </div>
-          <span className={'status ' + (apiReady ? 'online' : '')}>
+          <span className={'status ' + (apiReady ? 'online' : 'browser')}>
             <i />
-            {apiReady ? '本地服务已连接' : '本地服务待启动'}
+            {apiReady ? '本地服务已连接' : '浏览器本地模式'}
           </span>
         </header>
         {error && (
@@ -426,71 +514,88 @@ export default function App() {
           <div className="section-top">
             <div>
               <h2>今日训练空间</h2>
-              <p>先设置动作与机位，再开始一组。</p>
+              <p>视频中的动作会重定向到可定制的 SMPL / SMPL-X 人体。</p>
             </div>
             <div className="segmented">
               <button
                 disabled={running || busy}
-                className={!camera ? 'selected' : ''}
-                onClick={() => {
-                  setRunning(false);
-                  setCamera(false);
-                }}
+                className={sourceMode === 'simulation' ? 'selected' : ''}
+                onClick={() => chooseSource('simulation')}
               >
                 模拟演示
               </button>
               <button
                 disabled={running || busy}
-                className={camera ? 'selected' : ''}
-                onClick={() => {
-                  setRunning(false);
-                  setCamera(true);
-                  setError('');
-                }}
+                className={sourceMode === 'camera' ? 'selected' : ''}
+                onClick={() => chooseSource('camera')}
               >
                 真实摄像头
               </button>
+              <button
+                disabled={running || busy}
+                className={sourceMode === 'video' ? 'selected' : ''}
+                onClick={() => fileInput.current?.click()}
+              >
+                上传视频
+              </button>
             </div>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="video/*"
+              hidden
+              onChange={(e) => onVideoFile(e.target.files?.[0])}
+            />
           </div>
           <div className="training-grid">
-            <section className="camera-card">
-              <div className="camera-heading">
-                <span>
-                  <Camera size={16} />
-                  {camera ? '摄像头 · 本地姿态识别' : '模拟动作回放 · 非真实测量'}
-                </span>
-                <span className="camera-chip">
-                  {camera ? (modelReady ? '模型已就绪' : '模型准备中') : 'DEMO'}
-                </span>
-              </div>
-              <div className="viewport">
-                <video
-                  ref={video}
-                  muted
-                  playsInline
-                  style={{ display: camera ? 'block' : 'none' }}
-                />
-                <canvas ref={canvas} width={640} height={480} />
-                {!camera && <div className="demo-watermark">SIMULATION</div>}
-                <div className="view-tag">
-                  <span className={metrics.quality ? 'dot-good' : 'dot-wait'} />
-                  {metrics.quality ? '关键点可见' : '等待有效动作'}
+            <div className="stage-stack">
+              <section className="camera-card">
+                <div className="camera-heading">
+                  <span>
+                    <Camera size={16} />
+                    {sourceLabel}
+                    {sourceMode === 'video' && videoName ? ` · ${videoName}` : ''}
+                  </span>
+                  <span className="camera-chip">
+                    {sourceMode === 'simulation'
+                      ? 'DEMO'
+                      : modelReady
+                        ? bodyModel.toUpperCase()
+                        : '模型准备中'}
+                  </span>
                 </div>
-              </div>
-              <div className="camera-footer">
-                <LockKeyhole size={15} />
-                <span>画面只在当前设备处理</span>
-                <span>
-                  {Math.floor(elapsed / 60)
-                    .toString()
-                    .padStart(2, '0')}
-                  :
-                  {Math.floor(elapsed % 60)
-                    .toString()
-                    .padStart(2, '0')}
-                </span>
-              </div>
-            </section>
+                <div className="dual-view">
+                  <div className="viewport">
+                    <video ref={video} muted playsInline loop />
+                    <canvas ref={canvas} />
+                    {sourceMode === 'simulation' && <div className="demo-watermark">SIMULATION</div>}
+                    <div className="view-tag">
+                      <span className={metrics.quality ? 'dot-good' : 'dot-wait'} />
+                      {metrics.quality ? '骨骼已对齐人体' : '等待有效动作'}
+                    </div>
+                  </div>
+                  <div className="avatar-pane">
+                    <canvas ref={avatar} />
+                    <div className="avatar-label">
+                      {bodyModel === 'smplx' ? 'SMPL-X' : 'SMPL'} · 个性化标准人体
+                    </div>
+                  </div>
+                </div>
+                <div className="camera-footer">
+                  <LockKeyhole size={15} />
+                  <span>画面只在当前设备处理 · 亮色为重定向骨骼</span>
+                  <span>
+                    {Math.floor(elapsed / 60)
+                      .toString()
+                      .padStart(2, '0')}
+                    :
+                    {Math.floor(elapsed % 60)
+                      .toString()
+                      .padStart(2, '0')}
+                  </span>
+                </div>
+              </section>
+            </div>
             <section className="coach-card">
               <div className="card-kicker">YOUR TRAINING</div>
               <label className="field-label" htmlFor="exercise">
@@ -548,6 +653,14 @@ export default function App() {
                 >
                   <RotateCcw size={18} />
                 </button>
+                <button
+                  className="icon-button"
+                  aria-label="上传视频"
+                  disabled={busy || running}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <Upload size={18} />
+                </button>
               </div>
               <button className="finish-button" disabled={busy} onClick={finish}>
                 {busy ? '生成报告中…' : '结束本组并复盘'}
@@ -555,10 +668,21 @@ export default function App() {
               </button>
             </section>
           </div>
-          <div className="bottom-grid">
+          <div className="bottom-grid body-grid">
             <section className="panel">
-              <h3>训练设置</h3>
+              <h3>标准人体与体型</h3>
               <div className="fields">
+                <label>
+                  身高 cm
+                  <input
+                    type="number"
+                    min="120"
+                    max="220"
+                    disabled={running || busy}
+                    value={height}
+                    onChange={(e) => setHeight(Number(e.target.value))}
+                  />
+                </label>
                 <label>
                   体重 kg
                   <input
@@ -571,6 +695,108 @@ export default function App() {
                   />
                 </label>
                 <label>
+                  年龄
+                  <input
+                    type="number"
+                    min="14"
+                    max="80"
+                    disabled={running || busy}
+                    value={age}
+                    onChange={(e) => setAge(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <div className="fields">
+                <label>
+                  性别
+                  <select
+                    disabled={running || busy}
+                    value={sex}
+                    onChange={(e) => setSex(e.target.value as Sex)}
+                  >
+                    <option value="unspecified">不指定</option>
+                    <option value="female">女</option>
+                    <option value="male">男</option>
+                  </select>
+                </label>
+                <label>
+                  日常活动
+                  <select
+                    disabled={running || busy}
+                    value={activity}
+                    onChange={(e) => setActivity(e.target.value as ActivityLevel)}
+                  >
+                    <option value="sedentary">久坐</option>
+                    <option value="light">轻度</option>
+                    <option value="moderate">中等</option>
+                    <option value="active">活跃</option>
+                  </select>
+                </label>
+              </div>
+              <div className="calorie-need">
+                <span>每日热量需求</span>
+                <strong>
+                  {daily.need_kcal}
+                  <small> kcal</small>
+                </strong>
+                <p>
+                  BMR {daily.bmr_kcal} · TDEE {daily.tdee_kcal} · {daily.formula}
+                </p>
+              </div>
+              <label className="field-label" htmlFor="body-model">
+                人体模型
+              </label>
+              <select
+                id="body-model"
+                disabled={running || busy}
+                value={bodyModel}
+                onChange={(e) => setBodyModel(e.target.value as BodyModel)}
+              >
+                <option value="smpl">SMPL · 24 关节身体</option>
+                <option value="smplx">SMPL-X · 身体 + 脸手</option>
+              </select>
+              <label className="slider-label">
+                上肢肌肉 <strong>{Math.round(muscleUpper * 100)}%</strong>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  disabled={running || busy}
+                  value={Math.round(muscleUpper * 100)}
+                  onChange={(e) => setMuscleUpper(Number(e.target.value) / 100)}
+                />
+              </label>
+              <label className="slider-label">
+                核心肌肉 <strong>{Math.round(muscleCore * 100)}%</strong>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  disabled={running || busy}
+                  value={Math.round(muscleCore * 100)}
+                  onChange={(e) => setMuscleCore(Number(e.target.value) / 100)}
+                />
+              </label>
+              <label className="slider-label">
+                下肢肌肉 <strong>{Math.round(muscleLower * 100)}%</strong>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  disabled={running || busy}
+                  value={Math.round(muscleLower * 100)}
+                  onChange={(e) => setMuscleLower(Number(e.target.value) / 100)}
+                />
+              </label>
+              <p className="muted">
+                视频动作按 SMPL 拓扑重定向；身高决定骨长，体重与肌肉分布改变围度。这是浏览器内的标准人体近似，非正式 MPI
+                官方网格权重。
+              </p>
+            </section>
+            <section className="panel">
+              <h3>训练设置</h3>
+              <div className="fields">
+                <label>
                   本组目标次数
                   <input
                     type="number"
@@ -582,10 +808,19 @@ export default function App() {
                   />
                 </label>
               </div>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={showRaw}
+                  onChange={(e) => setShowRaw(e.target.checked)}
+                />
+                同时显示原始 MediaPipe 细线
+              </label>
               <details>
                 <summary>实验参数与机位要求</summary>
                 <p>
-                  深蹲采用侧面、左侧髋膝踝可见；开合跳采用正面、全身入画。尚未完成自动机位判断与个体校准。
+                  深蹲：侧面，髋膝踝可见。开合跳：正面，手脚同时打开收回。引体向上：正面抓杠，按躯干相对手腕升降计数（参考
+                  vision-demos）。跳绳：连续小跳，手腕在腰侧。
                 </p>
                 <label>
                   深蹲下降角度阈值（待验证）
@@ -636,14 +871,6 @@ export default function App() {
                 同意在本机保存本次摘要
               </label>
             </section>
-            <section className="panel tinted">
-              <ShieldCheck size={24} />
-              <h3>了解当前能力</h3>
-              <p>
-                计数与纠错采用待验证规则。Agent 协作默认是确定性基线；本地语言模型为可选解释层。
-              </p>
-              <span className="text-link">真实数据验证进行前，不宣称准确率</span>
-            </section>
           </div>
         </div>
         {tab === 'report' && (
@@ -687,8 +914,18 @@ export default function App() {
                   </div>
                 </div>
                 <p className="muted">
-                  {report.source === 'simulation' ? '本次为模拟记录。' : '本次来自摄像头记录。'}
+                  {report.source === 'simulation'
+                    ? '本次为模拟记录。'
+                    : report.source === 'video'
+                      ? '本次来自上传视频重定向。'
+                      : '本次来自摄像头记录。'}
                   {report.energy.note}{' '}
+                  {report.energy.daily
+                    ? `每日需求约 ${report.energy.daily.need_kcal} kcal（BMR ${report.energy.daily.bmr_kcal}）。 `
+                    : ''}
+                  {report.energy.net_low_kcal != null
+                    ? `本组净消耗 ${report.energy.net_low_kcal}–${report.energy.net_high_kcal} kcal。 `
+                    : ''}
                   {report.saved ? '摘要已保存至本机。' : '摘要仅暂存在当前会话。'}
                 </p>
                 {!!report.rep_details?.length && (
@@ -834,7 +1071,8 @@ export default function App() {
               {history.map((r) => (
                 <div className="history-row" key={r.session_id}>
                   <span>
-                    {r.source === 'simulation' ? '模拟' : '摄像头'} · {r.session_id.slice(0, 8)}
+                    {r.source === 'simulation' ? '模拟' : r.source === 'video' ? '视频' : '摄像头'} ·{' '}
+                    {r.session_id.slice(0, 8)}
                   </span>
                   <span>
                     完成度 {Math.round(r.completion * 100)}% · {r.proposal.reason}
@@ -956,11 +1194,13 @@ export default function App() {
             <section className="panel history">
               <h3>当前交付边界</h3>
               <p>
-                已提供：可运行前后端、模拟动作、真实姿态推理接线、计数规则、摘要与计划确认、规则协作记录、示例饮食计算、可选本地模型解释接口。
+                已提供：可运行前后端、模拟动作、真实姿态推理接线、SMPL/SMPL-X
+                骨骼重定向与体型定制、视频对齐可视化、计数规则、摘要与计划确认、GitHub Pages
+                静态部署路径。
               </p>
               <p>
-                待验证：真实动作准确率、自动机位判断、个体校准、实际设备性能、完整离线验收。待实现：语音、经核验食品库、学习型时序模型、LangGraph
-                接入。
+                待验证：真实动作准确率、自动机位判断、个体校准、实际设备性能。官方 SMPL
+                网格权重需单独申请，不随仓库分发。
               </p>
             </section>
           </div>

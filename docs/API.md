@@ -32,7 +32,7 @@
 }
 ```
 
-exercise：squat/jumping_jack；source：simulation/camera；fatigue：0–10。observable_seconds 不得大于 active_seconds。数值范围以 schema 为准。体重由用户填写，不由视频推断。
+exercise：squat/jumping_jack/pull_up/jump_rope；source：simulation/camera/video；fatigue：0–10。observable_seconds 不得大于 active_seconds。数值范围以 schema 为准。身高、体重与肌肉分布由用户填写，用于 SMPL 人体定制，不由视频推断。
 
 可选 `rep_details`（默认空，最多 100 条）为深蹲单次记录，字段：number、start_seconds、bottom_seconds、end_seconds、descent_seconds、ascent_seconds、min_angle_degrees、rom。rom 为 within_rule/below_rule/unobservable，只代表实验幅度规则。时间为不含暂停的活动时钟；阶段差值必须一致，次数递增、不重叠且位于本组时长以内。开合跳暂不接受此字段。结果回传用于复盘、trace 与保存。
 

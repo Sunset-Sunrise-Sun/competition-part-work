@@ -52,10 +52,21 @@ def test_no_persistence_without_consent(tmp_path, monkeypatch):
     assert not (tmp_path / "test.sqlite").exists()
 
 
+def test_video_source_and_body_profile_accepted():
+    report = analyze(SessionSummary(**payload(
+        source="video",
+        profile={"weight_kg": 70, "height_cm": 180, "muscle_upper": 0.6, "body_model": "smplx"},
+    )))
+    assert report["source"] == "video"
+
+
 def test_energy_scales_with_weight_and_duration():
     a = analyze(SessionSummary(**payload(profile={"weight_kg": 50})))
     b = analyze(SessionSummary(**payload(profile={"weight_kg": 100})))
     assert abs(b["energy"]["low_kcal"] - 2 * a["energy"]["low_kcal"]) <= 0.1
+    assert a["energy"]["daily"]["need_kcal"] > 0
+    assert b["energy"]["daily"]["need_kcal"] > a["energy"]["daily"]["need_kcal"]
+    assert a["energy"]["net_low_kcal"] <= a["energy"]["low_kcal"]
 
 
 def test_local_model_cannot_use_remote_endpoint(monkeypatch):

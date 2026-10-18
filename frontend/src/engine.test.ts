@@ -77,12 +77,17 @@ describe('exercise engine', () => {
     for (let t = 2400; t <= 3100; t += 50) result = engine.update(kneePose(180), t);
     expect(result!.reps).toBe(0);
   });
-  it.each(['squat', 'jumping_jack'] as const)('counts complete %s cycles', (exercise) => {
+  it.each([
+    ['squat', 3, 8],
+    ['jumping_jack', 3, 12],
+    ['pull_up', 3, 12],
+    ['jump_rope', 8, 45],
+  ] as const)('counts complete %s cycles', (exercise, min, max) => {
     const engine = new ExerciseEngine(exercise);
     let result;
     for (let t = 0; t < 12000; t += 50) result = engine.update(simulatedPose(t, exercise), t);
-    expect(result!.reps).toBeGreaterThan(3);
-    expect(result!.reps).toBeLessThan(8);
+    expect(result!.reps).toBeGreaterThanOrEqual(min);
+    expect(result!.reps).toBeLessThan(max);
   });
   it('does not count invisible poses', () => {
     const engine = new ExerciseEngine('squat');
