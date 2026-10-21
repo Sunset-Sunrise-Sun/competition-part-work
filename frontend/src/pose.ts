@@ -1,5 +1,6 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Point } from './types';
+import { strictOffline } from './runtime';
 
 export const POSE_CDN_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm';
 export const POSE_CDN_MODEL =
@@ -7,12 +8,10 @@ export const POSE_CDN_MODEL =
 
 export type PoseModel = PoseLandmarker;
 
-export function poseAssetBases(origin: string) {
+export function poseAssetBases(origin: string, strict = strictOffline) {
   const base = String(origin || '').replace(/\/$/, '');
-  return [
-    { wasm: `${base}/wasm`, model: `${base}/models/pose_landmarker_lite.task` },
-    { wasm: POSE_CDN_WASM, model: POSE_CDN_MODEL },
-  ];
+  const local = [{ wasm: `${base}/wasm`, model: `${base}/models/pose_landmarker_lite.task` }];
+  return strict ? local : [...local, { wasm: POSE_CDN_WASM, model: POSE_CDN_MODEL }];
 }
 
 async function createLandmarker(wasmBase: string, modelPath: string) {
@@ -27,15 +26,17 @@ async function createLandmarker(wasmBase: string, modelPath: string) {
 export async function createPoseLandmarker(
   origin: string,
   onFallback?: (message: string) => void,
+  strict = strictOffline,
 ): Promise<PoseLandmarker> {
-  const attempts = poseAssetBases(origin);
+  const attempts = poseAssetBases(origin, strict);
   let lastError: unknown;
   for (let i = 0; i < attempts.length; i += 1) {
     try {
       return await createLandmarker(attempts[i].wasm, attempts[i].model);
     } catch (error) {
       lastError = error;
-      if (i === 0) onFallback?.('本地模型未就绪，改用公共资源。' + String(error));
+      if (i + 1 < attempts.length)
+        onFallback?.('本地模型未就绪，已按在线资源模式改用公共资源。' + String(error));
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));

@@ -1,0 +1,5 @@
+[
+  {"name":"unspecified midpoint assumption","input":{"weightKg":65,"heightCm":170,"ageYears":22,"sex":"unspecified","activity":"light","goal":"habit"},"expected":{"bmr_kcal":1525,"tdee_kcal":2096,"need_kcal":2096}},
+  {"name":"female maintenance","input":{"weightKg":55,"heightCm":160,"ageYears":22,"sex":"female","activity":"light","goal":"habit"},"expected":{"bmr_kcal":1279,"tdee_kcal":1759,"need_kcal":1759}},
+  {"name":"male fitness scenario","input":{"weightKg":80,"heightCm":180,"ageYears":22,"sex":"male","activity":"active","goal":"fitness"},"expected":{"bmr_kcal":1820,"tdee_kcal":3140,"need_kcal":3340}}
+]

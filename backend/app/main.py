@@ -1,5 +1,6 @@
 from pathlib import Path
 from threading import RLock
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -43,15 +44,32 @@ def analyze_session(summary: SessionSummary):
 
 @app.post("/api/sessions/{session_id}/accept")
 def accept(session_id: str, request: AcceptProposal):
+    return decide(session_id, request, "accepted")
+
+
+@app.post("/api/sessions/{session_id}/reject")
+def reject(session_id: str, request: AcceptProposal):
+    return decide(session_id, request, "rejected")
+
+
+def decide(session_id: str, request: AcceptProposal, decision: str):
     with lock:
         report = reports.get(session_id)
         if not report:
             raise HTTPException(404, "Session not found in current process")
         if request.input_version != report["input_version"]:
             raise HTTPException(409, "Stale proposal")
+        if request.proposal_id is not None and request.proposal_id != report["proposal"]["proposal_id"]:
+            raise HTTPException(409, "Proposal identity mismatch")
         if report["proposal"]["blocked"]:
             raise HTTPException(409, "Continuation blocked by discomfort report")
-        report["proposal"]["status"] = "accepted"
+        status = report["proposal"]["status"]
+        if status == decision:
+            return report
+        if status != "pending":
+            raise HTTPException(409, "Decision already finalized")
+        report["proposal"]["status"] = decision
+        report["proposal"]["decided_at"] = datetime.now(timezone.utc).isoformat()
         if report["saved"]:
             storage.save(report)
         return report

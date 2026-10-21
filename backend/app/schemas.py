@@ -45,6 +45,8 @@ class SessionSummary(BaseModel):
     reps: int = Field(ge=0, le=10000)
     active_seconds: float = Field(ge=0, le=86400)
     observable_seconds: float = Field(ge=0, le=86400)
+    work_seconds: float | None = Field(default=None, ge=0, le=86400)
+    rest_seconds: float | None = Field(default=None, ge=0, le=86400)
     form_events: int = Field(ge=0, le=10000)
     fatigue: int = Field(default=4, ge=0, le=10)
     discomfort: bool = False
@@ -55,6 +57,12 @@ class SessionSummary(BaseModel):
 
     @model_validator(mode="after")
     def coherent_reps(self):
+        if self.observable_seconds > self.active_seconds:
+            raise ValueError("Observation cannot exceed active clock")
+        if (self.work_seconds is None) != (self.rest_seconds is None):
+            raise ValueError("Provide both work and rest durations")
+        if self.work_seconds is not None and self.work_seconds + self.rest_seconds > self.observable_seconds + 0.001:
+            raise ValueError("Classified durations cannot exceed observed duration")
         if self.exercise not in EXERCISE_IDS:
             raise ValueError("Unknown exercise")
         if self.rep_details and self.exercise != "squat":
@@ -70,6 +78,7 @@ class SessionSummary(BaseModel):
 
 class AcceptProposal(BaseModel):
     input_version: int = Field(ge=1)
+    proposal_id: str | None = Field(default=None, max_length=150)
 
 
 class FoodEntry(BaseModel):

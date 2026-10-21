@@ -1,5 +1,6 @@
 """Session and daily energy estimates. Scenario ranges, not measured values."""
 from __future__ import annotations
+import math
 
 from .catalog import MET, MET_DEFAULT
 PAL = {"sedentary": 1.2, "light": 1.375, "moderate": 1.55, "active": 1.725}
@@ -22,44 +23,13 @@ def daily_requirement(profile) -> dict:
     tdee = bmr * pal
     target = tdee + 200 if getattr(profile, "goal", "habit") == "fitness" else tdee
     return {
-        "bmr_kcal": round(bmr),
-        "tdee_kcal": round(tdee),
-        "need_kcal": round(target),
+        "bmr_kcal": math.floor(bmr + 0.5),
+        "tdee_kcal": math.floor(tdee + 0.5),
+        "need_kcal": math.floor(target + 0.5),
         "pal": pal,
         "formula": "Mifflin-St Jeor × 活动系数",
-        "note": "每日热量需求为情景估算，不是处方；健身目标按维持量上浮约 200 kcal。",
+        "note": "每日需求为情景估算；未指定公式性别项时使用中间常数 -78；活动系数为自评假设，健身目标 +200 kcal 为演示策略，不是个体处方。",
     }
 
 
-def session_energy(exercise: str, weight_kg: float, active_seconds: float,
-                   observable_seconds: float, rep_details: list, reps: int = 0) -> dict:
-    spec = MET.get(exercise, MET_DEFAULT)
-    phases = sum(getattr(rep, "descent_seconds", 0) + getattr(rep, "ascent_seconds", 0) for rep in rep_details)
-    from_reps = max(reps, len(rep_details)) * 2.0
-    from_visible = max(observable_seconds, active_seconds * 0.5) * 0.85
-    work = max(phases, from_reps, from_visible)
-    if work <= 0:
-        work = min(active_seconds, observable_seconds * 0.7)
-    work = min(max(work, 0.0), active_seconds)
-    rest = max(0.0, active_seconds - work)
-    hours_w, hours_r, hours_a = work / 3600, rest / 3600, active_seconds / 3600
-    low = spec["work"][0] * weight_kg * hours_w + spec["rest"] * weight_kg * hours_r
-    high = spec["work"][1] * weight_kg * hours_w + spec["rest"] * weight_kg * hours_r
-    rest_met = 1.0 * weight_kg * hours_a
-    return {
-        "low_kcal": round(low, 1),
-        "high_kcal": round(high, 1),
-        "net_low_kcal": round(max(0.0, low - rest_met), 1),
-        "net_high_kcal": round(max(0.0, high - rest_met), 1),
-        "work_seconds": round(work, 1),
-        "rest_seconds": round(rest, 1),
-        "met_work": spec["work"],
-        "met_rest": spec["rest"],
-        "compendium_id": spec["id"],
-        "kind": "gross_and_net_scenario",
-        "note": (
-            f"{spec['label']} {spec['work'][0]}–{spec['work'][1]} MET × {weight_kg}kg × "
-            f"{max(1, round(active_seconds))}秒 / 3600。短组只有数 kcal 是公式结果；"
-            f"一小时连续约 {round(spec['work'][0] * weight_kg)}–{round(spec['work'][1] * weight_kg)} kcal。"
-        ),
-    }
+from .session_energy import session_energy

@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { dailyRequirement, sessionEnergy } from './energy';
+import cases from '../../shared/energy_cases.json';
+import dailyCases from '../../shared/daily_cases.json';
+import type { Sex, ActivityLevel } from './energy';
+import catalog from '../../shared/energy_catalog.json';
+import { EXERCISES, type Exercise } from './catalog';
 
 describe('energy', () => {
+  it.each(dailyCases)('shared daily rounding: $name', (entry) => {
+    expect(
+      dailyRequirement({
+        ...entry.input,
+        sex: entry.input.sex as Sex,
+        activity: entry.input.activity as ActivityLevel,
+      }),
+    ).toMatchObject(entry.expected);
+  });
   it('increases daily need with body size and activity', () => {
     const light = dailyRequirement({
       weightKg: 55,
@@ -40,9 +54,32 @@ describe('energy', () => {
         },
       ],
     });
-    expect(energy.work_seconds).toBeGreaterThanOrEqual(42);
-    expect(energy.rest_seconds).toBeLessThanOrEqual(18);
-    expect(energy.low_kcal).toBeGreaterThan(2);
-    expect(energy.net_low_kcal).toBeLessThan(energy.low_kcal);
+    expect(energy.work_seconds).toBe(2);
+    expect(energy.rest_seconds).toBe(0);
+    expect(energy.unknown_seconds).toBe(58);
+    expect(energy.low_kcal).toBeGreaterThan(0);
+    expect(energy.net_low_kcal).toBeLessThanOrEqual(energy.low_kcal);
+  });
+  it.each(cases)('matches shared cross-runtime golden case: $name', (entry) => {
+    const actual = sessionEnergy({ ...entry, exercise: entry.exercise as Exercise });
+    expect(actual).toMatchObject(entry.expected);
+  });
+  it('keeps all catalog parameters aligned with the authoritative shared catalog', () => {
+    for (const id of Object.keys(EXERCISES) as Exercise[]) {
+      expect(EXERCISES[id].met).toEqual(catalog[id].work);
+      expect(EXERCISES[id].rest).toEqual(catalog[id].rest);
+    }
+  });
+  it('rejects invented duration and does not impute work from counts', () => {
+    const base = {
+      exercise: 'squat' as const,
+      weightKg: 65,
+      activeSeconds: 10,
+      observableSeconds: 0,
+      reps: 500,
+    };
+    expect(sessionEnergy(base).available).toBe(false);
+    expect(() => sessionEnergy({ ...base, workSeconds: 10, restSeconds: 0 })).toThrow();
+    expect(() => sessionEnergy({ ...base, workSeconds: 0 })).toThrow();
   });
 });

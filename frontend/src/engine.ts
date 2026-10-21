@@ -63,6 +63,7 @@ export class ExerciseEngine {
   } | null = null;
   private squatReps: SquatRep[] = [];
   private lastSampleTime: number | null = null;
+  private unknownReason = '';
   private dt = 0;
   private hipSmooth = 0.55;
   private hipMin = 0.55;
@@ -76,6 +77,7 @@ export class ExerciseEngine {
   ) {}
 
   update(points: Point[], time: number, aspectRatio = 1): Metrics {
+    this.unknownReason = '';
     this.dt = this.lastSampleTime == null ? 0 : Math.max(0, time - this.lastSampleTime);
     if (this.lastSampleTime !== null && time - this.lastSampleTime > 500) {
       this.candidate = null;
@@ -100,6 +102,14 @@ export class ExerciseEngine {
           points[i].y <= 1,
       );
     if (!quality) {
+      this.unknownReason =
+        !Number.isFinite(aspectRatio) || aspectRatio <= 0
+          ? '画面比例无效'
+          : needed.some((i) => !points[i])
+            ? '缺少所需关键点'
+            : needed.some((i) => (points[i].visibility ?? 0) < 0.65)
+              ? '关键点可见性不足'
+              : '所需关键点出画或坐标无效';
       if (this.candidate) this.candidate.obscured = true;
       if (this.lostSince === null) this.lostSince = time;
       if (time - this.lostSince > 500) {
@@ -112,7 +122,8 @@ export class ExerciseEngine {
       return this.result(false, '关键点不可见，请调整机位；暂停动作评价。');
     }
     this.lostSince = null;
-    if (family === 'knee' || family === 'knee_jump') return this.updateSquat(points, time, aspectRatio);
+    if (family === 'knee' || family === 'knee_jump')
+      return this.updateSquat(points, time, aspectRatio);
     if (family === 'open_close') return this.updateJumpingJack(points, time, aspectRatio);
     if (family === 'vertical_pull') return this.updatePullUp(points, time);
     if (family === 'rope') return this.updateBounce(points, time, true, 0.012);
@@ -122,7 +133,12 @@ export class ExerciseEngine {
     if (family === 'push') return this.updatePushUp(points, time);
     if (family === 'sit') return this.updateSit(points, time, 0.16);
     if (family === 'crunch') return this.updateSit(points, time, 0.08);
-    if (family === 'hold_plank') return this.updateHold(Math.abs(points[11].y - points[23].y) < 0.16, '保持平板，身体一条线。', '请成俯撑，肩髋接近同一高度。');
+    if (family === 'hold_plank')
+      return this.updateHold(
+        Math.abs(points[11].y - points[23].y) < 0.16,
+        '保持平板，身体一条线。',
+        '请成俯撑，肩髋接近同一高度。',
+      );
     if (family === 'hold_squat') {
       const knee = jointAngle(points[23], points[25], points[27], aspectRatio);
       return this.updateHold(knee < 130 && knee > 70, '保持静蹲。', '请屈膝靠墙，角度大约 90 度。');
@@ -130,8 +146,32 @@ export class ExerciseEngine {
     if (family === 'high_knee') return this.updateHighKnees(points, time, 0.03);
     if (family === 'jog') return this.updateHighKnees(points, time, 0.012);
     if (family === 'climber') return this.updateClimber(points, time);
-    if (family === 'curl') return this.updateElbow(points, time, 11, 13, 15, 80, 145, aspectRatio, '屈肘抬起。', '伸直放下。');
-    if (family === 'tricep') return this.updateElbow(points, time, 11, 13, 15, 90, 155, aspectRatio, '屈肘下放。', '在头顶伸直。');
+    if (family === 'curl')
+      return this.updateElbow(
+        points,
+        time,
+        11,
+        13,
+        15,
+        80,
+        145,
+        aspectRatio,
+        '屈肘抬起。',
+        '伸直放下。',
+      );
+    if (family === 'tricep')
+      return this.updateElbow(
+        points,
+        time,
+        11,
+        13,
+        15,
+        90,
+        155,
+        aspectRatio,
+        '屈肘下放。',
+        '在头顶伸直。',
+      );
     if (family === 'press') return this.updatePress(points, time);
     if (family === 'raise_side') return this.updateRaise(points, time, aspectRatio, false);
     if (family === 'raise_front') return this.updateRaise(points, time, aspectRatio, true);
@@ -147,7 +187,15 @@ export class ExerciseEngine {
     return this.updateBounce(points, time, false, 0.012);
   }
 
-  private countCycle(down: boolean, up: boolean, time: number, gap: number, downHint: string, upHint: string, done: string): Metrics {
+  private countCycle(
+    down: boolean,
+    up: boolean,
+    time: number,
+    gap: number,
+    downHint: string,
+    upHint: string,
+    done: string,
+  ): Metrics {
     if (down) {
       this.armed = true;
       if (this.state === 'up' && time - this.lastRep > gap) {
@@ -190,7 +238,13 @@ export class ExerciseEngine {
     this.smoothed = this.smoothed * 0.6 + raw * 0.4;
     const countThreshold = Math.min(145, this.downThreshold + 25);
     if (this.armed && this.smoothed < 150 && !this.candidate) {
-      this.candidate = { start: time, bottom: time, minAngle: this.smoothed, qualified: false, obscured: false };
+      this.candidate = {
+        start: time,
+        bottom: time,
+        minAngle: this.smoothed,
+        qualified: false,
+        obscured: false,
+      };
     }
     if (this.candidate) {
       if (this.smoothed < this.candidate.minAngle) {
@@ -216,7 +270,11 @@ export class ExerciseEngine {
             descent_seconds: (cycle.bottom - cycle.start) / 1000,
             ascent_seconds: (time - cycle.bottom) / 1000,
             min_angle_degrees: Math.round(cycle.minAngle * 10) / 10,
-            rom: cycle.obscured ? 'unobservable' : cycle.minAngle <= this.downThreshold ? 'within_rule' : 'below_rule',
+            rom: cycle.obscured
+              ? 'unobservable'
+              : cycle.minAngle <= this.downThreshold
+                ? 'within_rule'
+                : 'below_rule',
           });
           if (this.squatReps.length > 100) this.squatReps.shift();
         }
@@ -282,7 +340,15 @@ export class ExerciseEngine {
       this.state = 'ready';
       return this.result(true, '请双手抓住横杆，手腕应高于肩膀。');
     }
-    return this.countCycle(hang > 0.95, hang < 0.45, time, 600, '悬垂已看到。向上拉，让肩膀靠近手腕。', '拉到高点，再控制下放。', '回到悬垂，完成一次。');
+    return this.countCycle(
+      hang > 0.95,
+      hang < 0.45,
+      time,
+      600,
+      '悬垂已看到。向上拉，让肩膀靠近手腕。',
+      '拉到高点，再控制下放。',
+      '回到悬垂，完成一次。',
+    );
   }
 
   private updateBounce(points: Point[], time: number, rope: boolean, minAmp: number): Metrics {
@@ -295,7 +361,8 @@ export class ExerciseEngine {
     if (rope && !(points[15].y > points[11].y && points[16].y > points[12].y)) {
       return this.result(true, '跳绳时手腕应在腰侧摇绳，不要举过肩。');
     }
-    if (amp < minAmp) return this.result(true, rope ? '请小幅度连续跳起。' : '请踮脚向上，再轻轻落下。');
+    if (amp < minAmp)
+      return this.result(true, rope ? '请小幅度连续跳起。' : '请踮脚向上，再轻轻落下。');
     const up = this.hipSmooth < this.hipMin + amp * 0.35;
     const down = this.hipSmooth > this.hipMax - amp * 0.35;
     const dt = this.lastRep === -Infinity ? 400 : time - this.lastRep;
@@ -315,21 +382,46 @@ export class ExerciseEngine {
     const enough = side ? split > 0.16 : split > 0.14;
     const hip = (points[23].y + points[24].y) / 2;
     this.smoothed = hip * 180;
-    if (!enough) return this.result(true, side ? '请向一侧迈出足够步幅。' : '请前后分腿，步幅大一些。');
-    return this.countCycle(hip > 0.58, hip < 0.54, time, 450, '下到弓步。', '蹬回站立。', '完成一次弓步。');
+    if (!enough)
+      return this.result(true, side ? '请向一侧迈出足够步幅。' : '请前后分腿，步幅大一些。');
+    return this.countCycle(
+      hip > 0.58,
+      hip < 0.54,
+      time,
+      450,
+      '下到弓步。',
+      '蹬回站立。',
+      '完成一次弓步。',
+    );
   }
 
   private updatePushUp(points: Point[], time: number): Metrics {
     const flat = Math.abs(points[11].y - points[23].y) < 0.16;
     this.smoothed = points[11].y * 180;
     if (!flat) return this.result(true, '请成一条直线俯撑，肩髋接近同一高度。');
-    return this.countCycle(points[11].y > 0.48, points[11].y < 0.4, time, 450, '下降，胸部靠近地面。', '撑起。', '完成一次俯卧撑。');
+    return this.countCycle(
+      points[11].y > 0.48,
+      points[11].y < 0.4,
+      time,
+      450,
+      '下降，胸部靠近地面。',
+      '撑起。',
+      '完成一次俯卧撑。',
+    );
   }
 
   private updateSit(points: Point[], time: number, rise: number): Metrics {
     const lift = points[23].y - points[11].y;
     this.smoothed = lift * 200;
-    return this.countCycle(lift > rise, lift < rise * 0.35, time, 450, '躺下或回到起点。', '肩离地坐起。', '完成一次。');
+    return this.countCycle(
+      lift > rise,
+      lift < rise * 0.35,
+      time,
+      450,
+      '躺下或回到起点。',
+      '肩离地坐起。',
+      '完成一次。',
+    );
   }
 
   private updateHighKnees(points: Point[], time: number, margin: number): Metrics {
@@ -354,11 +446,23 @@ export class ExerciseEngine {
   }
 
   private updateClimber(points: Point[], time: number): Metrics {
-    if (Math.abs(points[11].y - points[23].y) > 0.2) return this.result(true, '先保持俯撑，再交替收膝。');
+    if (Math.abs(points[11].y - points[23].y) > 0.2)
+      return this.result(true, '先保持俯撑，再交替收膝。');
     return this.updateHighKnees(points, time, 0.02);
   }
 
-  private updateElbow(points: Point[], time: number, a: number, b: number, c: number, down: number, up: number, aspect: number, dHint: string, uHint: string): Metrics {
+  private updateElbow(
+    points: Point[],
+    time: number,
+    a: number,
+    b: number,
+    c: number,
+    down: number,
+    up: number,
+    aspect: number,
+    dHint: string,
+    uHint: string,
+  ): Metrics {
     const angle = jointAngle(points[a], points[b], points[c], aspect);
     if (!Number.isFinite(angle)) return this.result(false, '看不清肘关节。');
     this.smoothed = angle;
@@ -369,7 +473,15 @@ export class ExerciseEngine {
     const wrist = (points[15].y + points[16].y) / 2;
     const shoulder = (points[11].y + points[12].y) / 2;
     this.smoothed = (shoulder - wrist) * 200;
-    return this.countCycle(wrist > shoulder - 0.02, wrist < shoulder - 0.14, time, 400, '回到肩上。', '推过头顶。', '完成一次推举。');
+    return this.countCycle(
+      wrist > shoulder - 0.02,
+      wrist < shoulder - 0.14,
+      time,
+      400,
+      '回到肩上。',
+      '推过头顶。',
+      '完成一次推举。',
+    );
   }
 
   private updateRaise(points: Point[], time: number, aspect: number, front: boolean): Metrics {
@@ -386,20 +498,44 @@ export class ExerciseEngine {
     const knee = jointAngle(points[23], points[25], points[27], aspect);
     this.smoothed = torso;
     if (knee < 140) return this.result(true, '膝盖不要蹲得太深，这是髋铰链。');
-    return this.countCycle(torso < 130, torso > 155, time, 500, '臀部后推。', '站直到髋伸展。', '完成一次硬拉。');
+    return this.countCycle(
+      torso < 130,
+      torso > 155,
+      time,
+      500,
+      '臀部后推。',
+      '站直到髋伸展。',
+      '完成一次硬拉。',
+    );
   }
 
   private updateRow(points: Point[], time: number, aspect: number): Metrics {
     const elbow = jointAngle(points[11], points[13], points[15], aspect);
     this.smoothed = elbow;
-    return this.countCycle(elbow < 90, elbow > 140, time, 400, '手臂伸直。', '肘向后拉。', '完成一次划船。');
+    return this.countCycle(
+      elbow < 90,
+      elbow > 140,
+      time,
+      400,
+      '手臂伸直。',
+      '肘向后拉。',
+      '完成一次划船。',
+    );
   }
 
   private updateDip(points: Point[], time: number): Metrics {
     const wrist = (points[15].y + points[16].y) / 2;
     const shoulder = (points[11].y + points[12].y) / 2;
     this.smoothed = (shoulder - wrist) * 200;
-    return this.countCycle(shoulder > wrist + 0.08, shoulder < wrist + 0.03, time, 450, '身体下降。', '撑起。', '完成一次臂屈伸。');
+    return this.countCycle(
+      shoulder > wrist + 0.08,
+      shoulder < wrist + 0.03,
+      time,
+      450,
+      '身体下降。',
+      '撑起。',
+      '完成一次臂屈伸。',
+    );
   }
 
   private updateBridge(points: Point[], time: number): Metrics {
@@ -407,7 +543,15 @@ export class ExerciseEngine {
     const shoulder = (points[11].y + points[12].y) / 2;
     if (shoulder < 0.42) return this.result(true, '请仰卧，肩膀靠近画面下方。');
     this.smoothed = (shoulder - hip) * 200;
-    return this.countCycle(hip > shoulder - 0.02, hip < shoulder - 0.1, time, 450, '臀部放下。', '把髋顶起。', '完成一次臀桥。');
+    return this.countCycle(
+      hip > shoulder - 0.02,
+      hip < shoulder - 0.1,
+      time,
+      450,
+      '臀部放下。',
+      '把髋顶起。',
+      '完成一次臀桥。',
+    );
   }
 
   private updateSideLeg(points: Point[], time: number, aspect: number): Metrics {
@@ -415,7 +559,15 @@ export class ExerciseEngine {
     const footW = Math.abs(points[27].x - points[28].x) * aspect;
     const spread = footW / hipW;
     this.smoothed = spread * 40;
-    return this.countCycle(spread < 1.3, spread > 2.1, time, 400, '腿收回。', '向外抬腿。', '完成一次侧抬腿。');
+    return this.countCycle(
+      spread < 1.3,
+      spread > 2.1,
+      time,
+      400,
+      '腿收回。',
+      '向外抬腿。',
+      '完成一次侧抬腿。',
+    );
   }
 
   private updateBurpee(points: Point[], time: number): Metrics {
@@ -424,7 +576,8 @@ export class ExerciseEngine {
     const stand = hip < 0.58 && points[15].y < 0.62;
     const jump = hip < 0.48;
     this.smoothed = hip * 180;
-    if (handsDown) this.state = this.state === 'ready' || this.state === 'jump' ? 'down' : this.state;
+    if (handsDown)
+      this.state = this.state === 'ready' || this.state === 'jump' ? 'down' : this.state;
     if (this.state === 'down' && stand) this.state = 'stand';
     if (this.state === 'stand' && jump && time - this.lastRep > 700) {
       this.reps++;
@@ -505,6 +658,8 @@ export class ExerciseEngine {
       reps: this.reps,
       phase: this.state,
       quality,
+      quality_status: quality ? 'observed' : 'unknown',
+      unknown_reason: quality ? '' : this.unknownReason || '无法可靠计算当前动作几何',
       hint,
       angle: Math.round(this.smoothed),
       events: this.events,
@@ -574,7 +729,8 @@ export function simulatedPose(time: number, exercise: Exercise): Point[] {
   }
   if (exercise === 'jump_rope' || exercise === 'calf_raise') {
     const h = exercise === 'jump_rope' ? hop : wave(time, 320) * 0.04;
-    for (const i of [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]) p[i] = { ...p[i], y: p[i].y - h };
+    for (const i of [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28])
+      p[i] = { ...p[i], y: p[i].y - h };
     return p;
   }
   if (exercise === 'lunge' || exercise === 'side_lunge') {
@@ -725,12 +881,20 @@ export function simulatedPose(time: number, exercise: Exercise): Point[] {
   if (exercise === 'arm_circle') {
     const a = time / 180;
     p[15] = { x: 0.44 + Math.cos(a) * 0.16, y: 0.28 + Math.sin(a) * 0.16, visibility: 1 };
-    p[16] = { x: 0.56 + Math.cos(a + Math.PI) * 0.16, y: 0.28 + Math.sin(a + Math.PI) * 0.16, visibility: 1 };
+    p[16] = {
+      x: 0.56 + Math.cos(a + Math.PI) * 0.16,
+      y: 0.28 + Math.sin(a + Math.PI) * 0.16,
+      visibility: 1,
+    };
     return p;
   }
   if (exercise === 'jumping_squat') {
     const squat = wave(time, 700);
-    p[23] = { x: 0.46 + squat * 0.1, y: 0.52 + squat * 0.16 - (squat < 0.15 ? 0.06 : 0), visibility: 1 };
+    p[23] = {
+      x: 0.46 + squat * 0.1,
+      y: 0.52 + squat * 0.16 - (squat < 0.15 ? 0.06 : 0),
+      visibility: 1,
+    };
     p[24] = { x: 0.54 + squat * 0.1, y: 0.52 + squat * 0.16, visibility: 1 };
     p[25] = { x: 0.46, y: 0.7, visibility: 1 };
     p[27] = { x: 0.46, y: 0.9, visibility: 1 };

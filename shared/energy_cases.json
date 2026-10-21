@@ -1,0 +1,7 @@
+[
+  {"name":"mixed squat","exercise":"squat","weightKg":65,"activeSeconds":60,"observableSeconds":50,"workSeconds":30,"restSeconds":20,"expected":{"low_kcal":2.4,"high_kcal":3.2,"net_low_kcal":1.5,"net_high_kcal":2.3,"unknown_seconds":10,"available":true}},
+  {"name":"mixed jack","exercise":"jumping_jack","weightKg":70,"activeSeconds":60,"observableSeconds":30,"workSeconds":20,"restSeconds":10,"expected":{"low_kcal":3,"high_kcal":3.5,"net_low_kcal":2.4,"net_high_kcal":2.9,"unknown_seconds":30,"available":true}},
+  {"name":"fully unobserved","exercise":"squat","weightKg":65,"activeSeconds":60,"observableSeconds":0,"workSeconds":0,"restSeconds":0,"expected":{"low_kcal":0,"high_kcal":0,"net_low_kcal":0,"net_high_kcal":0,"unknown_seconds":60,"available":false}},
+  {"name":"zero duration","exercise":"jumping_jack","weightKg":65,"activeSeconds":0,"observableSeconds":0,"workSeconds":0,"restSeconds":0,"expected":{"low_kcal":0,"high_kcal":0,"net_low_kcal":0,"net_high_kcal":0,"unknown_seconds":0,"available":false}},
+  {"name":"all stationary","exercise":"squat","weightKg":65,"activeSeconds":60,"observableSeconds":60,"workSeconds":0,"restSeconds":60,"expected":{"low_kcal":1.4,"high_kcal":1.4,"net_low_kcal":0.3,"net_high_kcal":0.3,"unknown_seconds":0,"available":true}}
+]

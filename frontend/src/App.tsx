@@ -20,7 +20,9 @@ import {
 } from 'lucide-react';
 import { EXERCISE_GROUPS, EXERCISE_IDS, EXERCISES, exerciseLabel, isExercise } from './catalog';
 import { ExerciseEngine, simulatedPose } from './engine';
-import { acceptReport, request } from './api';
+import { acceptReport, decideReport, request } from './api';
+import { ActivityTracker, type ActivityState } from './activity';
+import { runtimeMode, strictOffline } from './runtime';
 import { drawAvatar, drawRawPose, drawRetargetedOverlay, drawVideoFrame, syncCanvas } from './draw';
 import { dailyRequirement, sessionEnergy, type ActivityLevel, type Sex } from './energy';
 import { estimateFoods, searchFoods } from './foods';
@@ -46,6 +48,7 @@ const emptyMetrics: Metrics = {
 export default function App() {
   const [tab, setTab] = useState('training');
   const [exercise, setExercise] = useState<Exercise>('squat');
+  const [showExperimental, setShowExperimental] = useState(false);
   const [sourceMode, setSourceMode] = useState<SourceMode>('simulation');
   const [modelReady, setModelReady] = useState(false);
   const [running, setRunning] = useState(false);
@@ -104,18 +107,29 @@ export default function App() {
     };
     close?: () => void;
   } | null>(null);
-  const ingestPose = useRef<(data: { points: Point[]; worldPoints?: Point[]; activeElapsedMs: number; aspectRatio?: number }) => void>(
-    () => {},
-  );
+  const ingestPose = useRef<
+    (data: {
+      points: Point[];
+      worldPoints?: Point[];
+      activeElapsedMs: number;
+      aspectRatio?: number;
+      generation: number;
+    }) => void
+  >(() => {});
   const points = useRef<Point[]>([]);
   const worldPoints = useRef<Point[]>([]);
   const engine = useRef(new ExerciseEngine('squat'));
+  const activityTracker = useRef(new ActivityTracker());
+  const generation = useRef(0);
   const live = useRef({
     running: false,
     source: 'simulation' as SourceMode,
     ready: false,
     elapsed: 0,
     observable: 0,
+    work: 0,
+    rest: 0,
+    activityState: 'unknown' as ActivityState,
     quality: false,
     lastPose: 0,
     frameBusy: false,
@@ -125,8 +139,8 @@ export default function App() {
   const showRawRef = useRef(true);
 
   useEffect(() => {
-    fetch('/api/health', { signal: AbortSignal.timeout(4000) })
-      .then((r) => setApiReady(r.ok))
+    request('/health')
+      .then(() => setApiReady(true))
       .catch(() => setApiReady(false));
   }, []);
   useEffect(() => {
@@ -147,8 +161,13 @@ export default function App() {
   }, [showRaw]);
   useEffect(() => {
     engine.current = new ExerciseEngine(exercise, threshold);
+    generation.current++;
     live.current.elapsed = 0;
     live.current.observable = 0;
+    live.current.work = 0;
+    live.current.rest = 0;
+    live.current.activityState = 'unknown';
+    activityTracker.current = new ActivityTracker();
     live.current.quality = false;
     metricRef.current = emptyMetrics;
     setMetrics(emptyMetrics);
@@ -159,12 +178,19 @@ export default function App() {
 
   ingestPose.current = (data) => {
     live.current.frameBusy = false;
+    if (data.generation !== generation.current) return;
     points.current = data.points;
     worldPoints.current = data.worldPoints ?? [];
     if (live.current.running && live.current.source !== 'simulation') {
       const result = engine.current.update(data.points, data.activeElapsedMs, data.aspectRatio);
       metricRef.current = result;
       live.current.quality = result.quality;
+      live.current.activityState = activityTracker.current.update(
+        data.points,
+        data.activeElapsedMs,
+        result.quality,
+        data.aspectRatio,
+      );
       live.current.lastPose = performance.now();
       setMetrics(result);
     }
@@ -238,7 +264,7 @@ export default function App() {
       poseWorker.onerror = () => {
         startMainThreadOnce();
       };
-      poseWorker.postMessage({ type: 'init', origin });
+      poseWorker.postMessage({ type: 'init', origin, strictOffline });
     } catch {
       startMainThreadOnce();
     }
@@ -301,7 +327,7 @@ export default function App() {
       last = performance.now(),
       lastDraw = 0;
     const loop = (now: number) => {
-      const dt = Math.min((now - last) / 1000, 0.2);
+      const dt = Math.max(0, (now - last) / 1000);
       last = now;
       if (live.current.running) {
         live.current.elapsed += dt;
@@ -311,10 +337,18 @@ export default function App() {
           const result = engine.current.update(points.current, live.current.elapsed * 1000);
           metricRef.current = result;
           live.current.quality = result.quality;
+          live.current.activityState = activityTracker.current.update(
+            points.current,
+            live.current.elapsed * 1000,
+            result.quality,
+          );
           live.current.lastPose = now;
         }
-        if (live.current.quality && now - live.current.lastPose < 500)
+        if (dt <= 0.5 && live.current.quality && now - live.current.lastPose < 500) {
           live.current.observable += dt;
+          if (live.current.activityState === 'work') live.current.work += dt;
+          if (live.current.activityState === 'rest') live.current.rest += dt;
+        }
       } else if (live.current.source === 'simulation') {
         points.current = simulatedPose(live.current.elapsed * 1000, exercise);
         worldPoints.current = [];
@@ -343,15 +377,22 @@ export default function App() {
                 points: result.landmarks[0] ?? [],
                 worldPoints: result.worldLandmarks[0] ?? [],
                 activeElapsedMs: live.current.elapsed * 1000,
+                generation: generation.current,
                 aspectRatio: v.videoWidth / Math.max(v.videoHeight, 1),
               });
             } catch {
               live.current.frameBusy = false;
             }
           } else if (currentWorker) {
+            const frameGeneration = generation.current;
+            const frameElapsed = live.current.elapsed * 1000;
             createImageBitmap(v)
               .then((bitmap) => {
-                if (worker.current !== currentWorker || !live.current.running) {
+                if (
+                  worker.current !== currentWorker ||
+                  !live.current.running ||
+                  frameGeneration !== generation.current
+                ) {
                   bitmap.close();
                   live.current.frameBusy = false;
                   return;
@@ -361,7 +402,8 @@ export default function App() {
                     type: 'frame',
                     bitmap,
                     timestamp: now,
-                    activeElapsedMs: live.current.elapsed * 1000,
+                    activeElapsedMs: frameElapsed,
+                    generation: frameGeneration,
                   },
                   [bitmap],
                 );
@@ -374,8 +416,7 @@ export default function App() {
           }
         }
         const p = points.current;
-        const aspect =
-          v && v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 4 / 3;
+        const aspect = v && v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 4 / 3;
         const retargeted = p.length
           ? retargetPose(p, worldPoints.current, aspect, profileRef.current)
           : null;
@@ -408,11 +449,16 @@ export default function App() {
   }, [exercise]);
 
   function reset() {
+    generation.current++;
     live.current.running = false;
     setRunning(false);
     engine.current = new ExerciseEngine(exercise, threshold);
     live.current.elapsed = 0;
     live.current.observable = 0;
+    live.current.work = 0;
+    live.current.rest = 0;
+    live.current.activityState = 'unknown';
+    activityTracker.current = new ActivityTracker();
     live.current.quality = false;
     metricRef.current = emptyMetrics;
     setMetrics(emptyMetrics);
@@ -451,6 +497,7 @@ export default function App() {
     requestAnimationFrame(attachVideo);
   }
   async function toggleRunning() {
+    if (!validSettings()) return;
     if (discomfort) {
       setError('已报告不适，训练保持暂停。请结束本组查看报告。');
       return;
@@ -485,6 +532,9 @@ export default function App() {
       }
     }
     live.current.running = !live.current.running;
+    generation.current++;
+    live.current.activityState = 'unknown';
+    activityTracker.current = new ActivityTracker();
     setRunning(live.current.running);
     setError('');
   }
@@ -500,7 +550,13 @@ export default function App() {
       const result = await request<{
         total_kcal: number;
         note: string;
-        items?: { name: string; grams: number; total_kcal?: number; kcal?: number; matched: boolean }[];
+        items?: {
+          name: string;
+          grams: number;
+          total_kcal?: number;
+          kcal?: number;
+          matched: boolean;
+        }[];
       }>('/nutrition/estimate', {
         method: 'POST',
         body: JSON.stringify([
@@ -519,10 +575,17 @@ export default function App() {
       }));
       setFoodResult({ ...result, items });
       if (items[0] && (items[0].total_kcal > 0 || items[0].matched)) {
-        setMeal((prev) => [...prev, { name: items[0].name, grams: items[0].grams, total_kcal: items[0].total_kcal }]);
+        setMeal((prev) => [
+          ...prev,
+          { name: items[0].name, grams: items[0].grams, total_kcal: items[0].total_kcal },
+        ]);
         setMealConfirmed(false);
       } else {
-        setFoodError(items[0]?.name ? '已匹配名称，但热量是 0。请改克数或填写自定义热量。' : '没有匹配到食物，请换个名称或填写自定义热量。');
+        setFoodError(
+          items[0]?.name
+            ? '已匹配名称，但热量是 0。请改克数或填写自定义热量。'
+            : '没有匹配到食物，请换个名称或填写自定义热量。',
+        );
       }
     } catch (e) {
       setFoodError(String(e));
@@ -531,8 +594,10 @@ export default function App() {
     }
   }
   async function finish() {
+    generation.current++;
     live.current.running = false;
     setRunning(false);
+    if (!validSettings()) return;
     setBusy(true);
     setError('');
     try {
@@ -546,8 +611,10 @@ export default function App() {
           reps: metricRef.current.reps,
           active_seconds: live.current.elapsed,
           observable_seconds: Math.min(live.current.observable, live.current.elapsed),
+          work_seconds: live.current.work,
+          rest_seconds: live.current.rest,
           form_events: metricRef.current.events,
-          rep_details: metricRef.current.squatReps,
+          rep_details: exercise === 'squat' ? metricRef.current.squatReps : [],
           fatigue,
           discomfort,
           target_reps: target,
@@ -577,13 +644,36 @@ export default function App() {
   }
   async function accept() {
     if (!report) return;
+    setBusy(true);
     try {
       const next = await acceptReport(report);
       setReport(next);
       setTarget(next.proposal.target_reps);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
     }
+  }
+  function validSettings() {
+    if (
+      !Number.isFinite(weight) ||
+      weight < 30 ||
+      weight > 250 ||
+      !Number.isFinite(height) ||
+      height < 120 ||
+      height > 220 ||
+      !Number.isFinite(age) ||
+      age < 14 ||
+      age > 80 ||
+      !Number.isInteger(target) ||
+      target < 1 ||
+      target > 100
+    ) {
+      setError('请填写有效设置：体重 30–250kg、身高 120–220cm、年龄 14–80 岁、目标 1–100 次。');
+      return false;
+    }
+    return true;
   }
   function exportReport() {
     if (!report) return;
@@ -611,16 +701,30 @@ export default function App() {
     activity,
     goal: 'habit',
   });
-  const liveBurn = sessionEnergy({
-    exercise,
-    weightKg: weight,
-    activeSeconds: Math.max(elapsed, metrics.reps * 2),
-    observableSeconds: Math.max(elapsed * 0.85, metrics.reps * 1.5),
-    reps: metrics.reps,
-    repDetails: metrics.squatReps,
-  });
+  const liveBurn =
+    Number.isFinite(weight) && weight >= 30 && weight <= 250
+      ? sessionEnergy({
+          exercise,
+          weightKg: weight,
+          activeSeconds: live.current.elapsed,
+          observableSeconds: live.current.observable,
+          workSeconds: live.current.work,
+          restSeconds: live.current.rest,
+          reps: metrics.reps,
+          repDetails: metrics.squatReps,
+        })
+      : {
+          available: false,
+          low_kcal: 0,
+          high_kcal: 0,
+          note: '请填写有效体重后估算；不会用默认体重替代无效输入。',
+        };
   const sourceLabel =
-    sourceMode === 'camera' ? '摄像头 · 本地姿态识别' : sourceMode === 'video' ? '上传视频 · 骨骼重定向' : '模拟动作回放 · 非真实测量';
+    sourceMode === 'camera'
+      ? '摄像头 · 本地姿态识别'
+      : sourceMode === 'video'
+        ? '上传视频 · 骨骼重定向'
+        : '模拟动作回放 · 非真实测量';
   const canStart =
     sourceMode === 'simulation' ||
     (sourceMode === 'video' && Boolean(videoUrl.current || videoName)) ||
@@ -674,23 +778,53 @@ export default function App() {
                     ? '记录饮食，从确认份量开始。'
                     : '把想法，变成共同的进度。'}
             </h1>
-            <p>居家运动 · SMPL 骨骼重定向 · 可解释的教练协作</p>
+            <p>居家运动 · 原创演示骨架 · 可解释的规则协作</p>
           </div>
           <span className={'status ' + (apiReady ? 'online' : 'browser')}>
             <i />
-            {apiReady ? '本地服务已连接' : '浏览器本地模式'}
+            {runtimeMode === 'browser'
+              ? '浏览器规则模式'
+              : apiReady
+                ? '本地后端已连接'
+                : '后端不可用 · 不自动降级'}
           </span>
         </header>
-        {tab === 'training' && error && (
+        {error && (
           <div role="alert" className="alert">
             {error}
           </div>
         )}
+        <div className="panel" style={{ marginBottom: 20 }}>
+          <strong>
+            {runtimeMode === 'browser'
+              ? '浏览器计算与标签页内历史'
+              : '本地后端计算与授权后的 SQLite 历史'}{' '}
+            · {strictOffline ? '仅本机/同源模型资源' : '允许公共资源加载'}
+          </strong>
+          <p>
+            模式在本页会话期间固定，请求失败不会自动切换。切换链接会重载页面并结束当前训练；浏览器摘要关闭标签页后不保留。完全断网需提前下载资源并启动本地服务，公网演示不代表离线安装。
+          </p>
+          <div className="inline-actions">
+            <a className="secondary" href="?runtime=browser">
+              浏览器规则 · 仅同源资源
+            </a>
+            {!location.hostname.endsWith('github.io') && (
+              <a className="secondary" href="?runtime=backend">
+                本地后端 · 仅同源资源
+              </a>
+            )}
+            <a className="secondary" href={`?runtime=${runtimeMode}&assets=online`}>
+              在线资源模式（允许 CDN）
+            </a>
+          </div>
+        </div>
         <div style={{ display: tab === 'training' ? 'block' : 'none' }}>
           <div className="section-top">
             <div>
               <h2>今日训练空间</h2>
-              <p>视频中的动作会重定向到可定制的 SMPL / SMPL-X 人体。</p>
+              <p>
+                优先验收深蹲和开合跳；其余动作保留实验入口。骨架用于展示，不测量体型或推断肌肉。
+              </p>
             </div>
             <div className="segmented">
               <button
@@ -744,7 +878,9 @@ export default function App() {
                   <div className="viewport">
                     <video ref={video} muted playsInline loop />
                     <canvas ref={canvas} />
-                    {sourceMode === 'simulation' && <div className="demo-watermark">SIMULATION</div>}
+                    {sourceMode === 'simulation' && (
+                      <div className="demo-watermark">SIMULATION</div>
+                    )}
                     <div className="view-tag">
                       <span className={metrics.quality ? 'dot-good' : 'dot-wait'} />
                       {metrics.quality ? '骨骼已对齐人体' : '等待有效动作'}
@@ -753,7 +889,7 @@ export default function App() {
                   <div className="avatar-pane">
                     <canvas ref={avatar} />
                     <div className="avatar-label">
-                      {bodyModel === 'smplx' ? 'SMPL-X' : 'SMPL'} · 个性化标准人体
+                      原创演示骨架 · {bodyModel === 'smplx' ? '扩展关节' : '身体关节'}
                     </div>
                   </div>
                 </div>
@@ -777,6 +913,19 @@ export default function App() {
               <label className="field-label" htmlFor="exercise-search">
                 当前动作
               </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  disabled={running || busy}
+                  checked={showExperimental}
+                  onChange={(e) => {
+                    setShowExperimental(e.target.checked);
+                    if (!e.target.checked && exercise !== 'squat' && exercise !== 'jumping_jack')
+                      setExercise('squat');
+                  }}
+                />
+                显示其他实验动作（未完成真实验收）
+              </label>
               <input
                 id="exercise-search"
                 placeholder="搜索动作，如 深蹲 / 俯卧撑 / 波比"
@@ -797,8 +946,13 @@ export default function App() {
                   const items = EXERCISE_IDS.filter((id) => {
                     const item = EXERCISES[id];
                     if (item.group !== group) return false;
+                    if (!showExperimental && id !== 'squat' && id !== 'jumping_jack') return false;
                     if (!q) return true;
-                    return item.name.includes(exerciseQuery) || id.includes(q) || exerciseLabel(id).includes(exerciseQuery);
+                    return (
+                      item.name.includes(exerciseQuery) ||
+                      id.includes(q) ||
+                      exerciseLabel(id).includes(exerciseQuery)
+                    );
                   });
                   if (!items.length) return null;
                   return (
@@ -806,6 +960,7 @@ export default function App() {
                       {items.map((id) => (
                         <option key={id} value={id}>
                           {exerciseLabel(id)}
+                          {id === 'squat' || id === 'jumping_jack' ? ' · 核心待实测' : ' · 实验性'}
                         </option>
                       ))}
                     </optgroup>
@@ -836,11 +991,20 @@ export default function App() {
                 <Sparkles size={19} />
                 <div>
                   <strong>当前教练提示</strong>
-                  <p>{metrics.hint}</p>
+                  <p>
+                    {metrics.hint}
+                    {!metrics.quality && metrics.unknown_reason
+                      ? `（${metrics.unknown_reason}）`
+                      : ''}
+                  </p>
                 </div>
               </div>
               <div className="controls">
-                <button className="primary" disabled={busy || !canStart} onClick={() => void toggleRunning()}>
+                <button
+                  className="primary"
+                  disabled={busy || !canStart}
+                  onClick={() => void toggleRunning()}
+                >
                   {running ? <Pause size={17} /> : <Play size={17} />}{' '}
                   {running ? '暂停' : '开始 / 继续'}
                 </button>
@@ -869,7 +1033,7 @@ export default function App() {
           </div>
           <div className="bottom-grid body-grid">
             <section className="panel">
-              <h3>标准人体与体型</h3>
+              <h3>演示骨架与用户输入参数</h3>
               <div className="fields">
                 <label>
                   身高 cm
@@ -939,21 +1103,17 @@ export default function App() {
                   <small> kcal</small>
                 </strong>
                 <p>
-                  BMR {daily.bmr_kcal} · TDEE {daily.tdee_kcal}。这是一天吃多少，不是这一组烧掉多少。
+                  BMR {daily.bmr_kcal} · TDEE {daily.tdee_kcal}
+                  。这是每日需求情景，不是本组消耗。{daily.note}
                 </p>
               </div>
               <div className="calorie-need session-burn">
                 <span>本组消耗估算</span>
                 <strong>
-                  {liveBurn.low_kcal}–{liveBurn.high_kcal}
+                  {liveBurn.available ? `${liveBurn.low_kcal}–${liveBurn.high_kcal}` : '待有效片段'}
                   <small> kcal</small>
                 </strong>
-                <p>
-                  {weight}kg · {EXERCISES[exercise].name} {EXERCISES[exercise].met[0]}–
-                  {EXERCISES[exercise].met[1]} MET · {Math.max(0, Math.round(elapsed))} 秒。短组本来只有数
-                  kcal；一小时连续约 {Math.round(EXERCISES[exercise].met[0] * weight)}–
-                  {Math.round(EXERCISES[exercise].met[1] * weight)} kcal。
-                </p>
+                <p>{liveBurn.note}</p>
               </div>
               <label className="field-label" htmlFor="body-model">
                 人体模型
@@ -964,8 +1124,8 @@ export default function App() {
                 value={bodyModel}
                 onChange={(e) => setBodyModel(e.target.value as BodyModel)}
               >
-                <option value="smpl">SMPL · 24 关节身体</option>
-                <option value="smplx">SMPL-X · 身体 + 脸手</option>
+                <option value="smpl">原创骨架 · 身体关节</option>
+                <option value="smplx">原创骨架 · 扩展关节（含推定部分）</option>
               </select>
               <label className="slider-label">
                 上肢肌肉 <strong>{Math.round(muscleUpper * 100)}%</strong>
@@ -1001,8 +1161,8 @@ export default function App() {
                 />
               </label>
               <p className="muted">
-                视频动作按 SMPL 拓扑重定向；身高决定骨长，体重与肌肉分布改变围度。这是浏览器内的标准人体近似，非正式 MPI
-                官方网格权重。
+                原创示意骨架按用户输入调整外观，不使用官方 SMPL/SMPL-X 权重或派生参数。
+                骨长和粗细是展示假设，不是摄像头测量值；未观测到的手指等关节只作示意。
               </p>
             </section>
             <section className="panel">
@@ -1031,8 +1191,8 @@ export default function App() {
               <details>
                 <summary>实验参数与机位要求</summary>
                 <p>
-                  {EXERCISES[exercise].hint} 当前共 {EXERCISE_IDS.length} 个动作。平板和靠墙静蹲按每 8
-                  秒计 1 次。
+                  {EXERCISES[exercise].hint} 当前共 {EXERCISE_IDS.length} 个动作。平板和靠墙静蹲按每
+                  8 秒计 1 次。
                 </p>
                 <label>
                   深蹲下降角度阈值（待验证）
@@ -1120,7 +1280,9 @@ export default function App() {
                       总消耗情景估算
                     </span>
                     <strong>
-                      {report.energy.low_kcal}–{report.energy.high_kcal}
+                      {report.energy.available === false
+                        ? '无法估算'
+                        : `${report.energy.low_kcal}–${report.energy.high_kcal}`}
                       <small>kcal</small>
                     </strong>
                   </div>
@@ -1193,13 +1355,36 @@ export default function App() {
                     <p>{report.proposal.reason}</p>
                     <button
                       className="primary"
-                      disabled={report.proposal.blocked || report.proposal.status === 'accepted'}
+                      disabled={
+                        busy || report.proposal.blocked || report.proposal.status !== 'pending'
+                      }
                       onClick={accept}
                     >
                       <Check size={16} />
                       {report.proposal.status === 'accepted'
                         ? '已确认并更新目标'
-                        : '确认下一组计划'}
+                        : report.proposal.status === 'rejected'
+                          ? '已拒绝，保留原计划'
+                          : '确认下一组计划'}
+                    </button>
+                    <button
+                      className="secondary"
+                      disabled={
+                        busy || report.proposal.blocked || report.proposal.status !== 'pending'
+                      }
+                      onClick={async () => {
+                        if (!report) return;
+                        setBusy(true);
+                        try {
+                          setReport(await decideReport(report, 'reject'));
+                        } catch (e) {
+                          setError(String(e));
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      拒绝调整，保持原计划
                     </button>
                     <button
                       className="finish-button"
@@ -1283,8 +1468,8 @@ export default function App() {
               {history.map((r) => (
                 <div className="history-row" key={r.session_id}>
                   <span>
-                    {r.source === 'simulation' ? '模拟' : r.source === 'video' ? '视频' : '摄像头'} ·{' '}
-                    {r.session_id.slice(0, 8)}
+                    {r.source === 'simulation' ? '模拟' : r.source === 'video' ? '视频' : '摄像头'}{' '}
+                    · {r.session_id.slice(0, 8)}
                   </span>
                   <span>
                     完成度 {Math.round(r.completion * 100)}% · {r.proposal.reason}
@@ -1470,13 +1655,12 @@ export default function App() {
             <section className="panel history">
               <h3>当前交付边界</h3>
               <p>
-                已提供：可运行前后端、模拟动作、真实姿态推理接线、SMPL/SMPL-X
-                骨骼重定向与体型定制、视频对齐可视化、计数规则、摘要与计划确认、GitHub Pages
-                静态部署路径。
+                已提供：可运行前后端、模拟动作、真实姿态推理接线、原创演示骨架、视频对齐、实验计数、
+                会话提案与接受/拒绝、活动/静止/未知分段情景估算，以及仅同源资源模式。
               </p>
               <p>
-                待验证：真实动作准确率、自动机位判断、个体校准、实际设备性能。官方 SMPL
-                网格权重需单独申请，不随仓库分发。
+                待验证：真实动作准确率、活动分段、实际设备性能和断网重启；自动机位与个体校准仍待实现。
+                两核心动作优先验收，其余为实验入口。食品数据仍是未完成来源核验的示例。
               </p>
             </section>
           </div>

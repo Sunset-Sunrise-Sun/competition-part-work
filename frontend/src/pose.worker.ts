@@ -8,9 +8,13 @@ self.onmessage = (event: MessageEvent) => {
   chain = chain.then(async () => {
     try {
       if (data.type === 'init') {
-        model = await createPoseLandmarker(String(data.origin || ''), (message) => {
-          self.postMessage({ type: 'progress', message });
-        });
+        model = await createPoseLandmarker(
+          String(data.origin || ''),
+          (message) => {
+            self.postMessage({ type: 'progress', message });
+          },
+          data.strictOffline !== false,
+        );
         self.postMessage({ type: 'ready' });
       } else if (data.type === 'frame') {
         try {
@@ -22,6 +26,7 @@ self.onmessage = (event: MessageEvent) => {
             worldPoints: poseFromLandmarks(result.worldLandmarks[0]),
             timestamp: data.timestamp,
             activeElapsedMs: data.activeElapsedMs,
+            generation: data.generation,
             aspectRatio: data.bitmap.width / data.bitmap.height,
           });
         } finally {

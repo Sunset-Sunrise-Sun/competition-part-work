@@ -15,6 +15,8 @@ export type Metrics = {
   reps: number;
   phase: string;
   quality: boolean;
+  quality_status?: 'observed' | 'unknown';
+  unknown_reason?: string;
   hint: string;
   angle: number;
   events: number;
@@ -35,6 +37,8 @@ export type Report = {
     net_high_kcal?: number;
     work_seconds?: number;
     rest_seconds?: number;
+    unknown_seconds?: number;
+    available?: boolean;
     daily?: { bmr_kcal: number; tdee_kcal: number; need_kcal: number; note: string };
     note: string;
   };
@@ -44,6 +48,8 @@ export type Report = {
     reason: string;
     blocked: boolean;
     status: string;
+    proposal_id?: string;
+    decided_at?: string | null;
   };
   trace: {
     role: string;

@@ -31,7 +31,7 @@ def analyze(summary: SessionSummary) -> dict:
     elif low_evidence:
         reason = "有效观察不足：保持计划，先调整机位或补充训练记录。"
     elif summary.fatigue >= 7 or completion < 0.7:
-        target = max(1, round(target * 0.8))
+        target = max(1, int(target * 0.8 + 0.5))
         rest = 90
         reason = "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
     elif summary.form_events > 2 or rom_counts["below_rule"] > 2:
@@ -46,7 +46,8 @@ def analyze(summary: SessionSummary) -> dict:
 
     energy = {
         **session_energy(summary.exercise, summary.profile.weight_kg, summary.active_seconds,
-                         summary.observable_seconds, summary.rep_details, summary.reps),
+                         summary.observable_seconds, summary.rep_details, summary.reps,
+                         summary.work_seconds, summary.rest_seconds),
         "daily": daily_requirement(summary.profile),
     }
     record("reporter", {"source": summary.source, "energy": energy}, "生成可追踪摘要，不推断医疗状态。")
@@ -54,5 +55,6 @@ def analyze(summary: SessionSummary) -> dict:
             "source": summary.source, "coverage": round(coverage, 3), "completion": round(completion, 3),
             "rep_details": [rep.model_dump() for rep in summary.rep_details],
             "energy": energy, "proposal": {"target_reps": target, "rest_seconds": rest,
-            "reason": reason, "blocked": blocked, "status": "blocked" if blocked else "pending"},
+            "reason": reason, "blocked": blocked, "status": "blocked" if blocked else "pending",
+            "proposal_id": f"{summary.session_id}:{summary.input_version}", "decided_at": None},
             "trace": trace, "saved": summary.persist}

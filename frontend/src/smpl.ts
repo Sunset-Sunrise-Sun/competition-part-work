@@ -1,5 +1,6 @@
 import type { Point } from './types';
-import official from './smplx_official.json';
+// Legacy exported names remain API-compatible; parameters are an original diagram.
+import official from './body_template.json';
 
 export type Vec3 = { x: number; y: number; z: number };
 export type BodyModel = 'smpl' | 'smplx';
@@ -206,7 +207,12 @@ function fromImage(point: Point, aspect: number): Vec3 {
   return v((point.x - 0.5) * aspect, -(point.y - 0.5), -(point.z ?? 0) * 0.45);
 }
 
-function take(points: Point[], world: Point[] | undefined, aspect: number, index: number): Vec3 | null {
+function take(
+  points: Point[],
+  world: Point[] | undefined,
+  aspect: number,
+  index: number,
+): Vec3 | null {
   const src = world && world.length > index ? world[index] : points[index];
   if (!src || (src.visibility ?? 1) < 0.25) return null;
   return world && world.length > index ? fromWorld(src) : fromImage(src, aspect);
@@ -230,8 +236,7 @@ export function mediapipeToSource(
   const Lank = g(27);
   const Rank = g(28);
   const nose = g(0);
-  const mouth =
-    g(9) && g(10) ? mid(g(9) as Vec3, g(10) as Vec3) : g(9) || g(10);
+  const mouth = g(9) && g(10) ? mid(g(9) as Vec3, g(10) as Vec3) : g(9) || g(10);
   const source: (Vec3 | null)[] = Array.from({ length: 55 }, () => null);
   source[0] = pelvis;
   source[1] = Lhip;
@@ -275,9 +280,7 @@ export function retargetSkeleton(source: (Vec3 | null)[], profile: BodyProfile):
     const child = source[i];
     const srcParent = source[parent];
     const dir =
-      child && srcParent
-        ? normalize(sub(child, srcParent))
-        : normalize(sub(rest[i], rest[parent]));
+      child && srcParent ? normalize(sub(child, srcParent)) : normalize(sub(rest[i], rest[parent]));
     out[i] = add(out[parent], scale(dir, restLen));
   }
   return out;

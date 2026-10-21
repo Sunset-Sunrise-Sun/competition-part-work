@@ -1,4 +1,5 @@
 import type { Exercise } from './catalog';
+import { isExercise } from './catalog';
 import { dailyRequirement, sessionEnergy, type ActivityLevel, type Sex } from './energy';
 import { estimateFoods } from './foods';
 import type { Report, SquatRep } from './types';
@@ -11,6 +12,8 @@ export type LocalSummary = {
   reps: number;
   active_seconds: number;
   observable_seconds: number;
+  work_seconds?: number;
+  rest_seconds?: number;
   form_events: number;
   fatigue: number;
   discomfort: boolean;
@@ -30,11 +33,102 @@ export type LocalSummary = {
 
 const HISTORY_KEY = 'localfit-browser-history';
 let lastReport: Report | null = null;
+const reports = new Map<string, Report>();
+
+export function reportFor(sessionId: string): Report {
+  const report = reports.get(sessionId);
+  if (!report) throw new Error('当前会话不存在或已清除，请重新训练。');
+  return structuredClone(report);
+}
 
 export function analyzeLocal(summary: LocalSummary): Report {
+  if (
+    !isExercise(summary.exercise) ||
+    !['simulation', 'camera', 'video'].includes(summary.source) ||
+    !/^[a-zA-Z0-9_-]{1,100}$/.test(summary.session_id)
+  )
+    throw new Error('动作、来源或会话标识无效。');
+  const previous = reports.get(summary.session_id);
+  if (previous && summary.input_version <= previous.input_version)
+    throw new Error('拒绝过期或重复的摘要版本。');
+  for (const [value, min, max] of [
+    [summary.profile.height_cm, 120, 220],
+    [summary.profile.age_years, 14, 80],
+  ] as const) {
+    if (value !== undefined && (!Number.isFinite(value) || value < min || value > max))
+      throw new Error('身高或年龄无效。');
+  }
+  if (
+    summary.profile.sex !== undefined &&
+    !['female', 'male', 'unspecified'].includes(summary.profile.sex)
+  )
+    throw new Error('公式参数无效。');
+  if (
+    summary.profile.activity !== undefined &&
+    !['sedentary', 'light', 'moderate', 'active'].includes(summary.profile.activity)
+  )
+    throw new Error('活动参数无效。');
+  if (
+    !Number.isFinite(summary.active_seconds) ||
+    summary.active_seconds < 0 ||
+    summary.active_seconds > 86400 ||
+    !Number.isFinite(summary.observable_seconds) ||
+    summary.observable_seconds < 0 ||
+    summary.observable_seconds > summary.active_seconds ||
+    !Number.isInteger(summary.input_version) ||
+    summary.input_version < 1 ||
+    !Number.isInteger(summary.target_reps) ||
+    summary.target_reps < 1 ||
+    summary.target_reps > 100 ||
+    !Number.isFinite(summary.profile.weight_kg) ||
+    summary.profile.weight_kg < 30 ||
+    summary.profile.weight_kg > 250 ||
+    !Number.isInteger(summary.reps) ||
+    summary.reps < 0 ||
+    summary.reps > 10000 ||
+    !Number.isInteger(summary.form_events) ||
+    summary.form_events < 0 ||
+    summary.form_events > 10000 ||
+    !Number.isInteger(summary.fatigue) ||
+    summary.fatigue < 0 ||
+    summary.fatigue > 10
+  )
+    throw new Error('训练摘要参数无效。');
   const coverage = Math.min(1, summary.observable_seconds / Math.max(summary.active_seconds, 1));
   const completion = Math.min(1, summary.reps / summary.target_reps);
   const details = summary.rep_details ?? [];
+  if (details.length > 100 || (details.length > 0 && summary.exercise !== 'squat'))
+    throw new Error('单次记录当前只支持深蹲，最多 100 条。');
+  let previousEnd = -1,
+    previousNumber = 0;
+  for (const rep of details) {
+    if (
+      ![
+        rep.start_seconds,
+        rep.bottom_seconds,
+        rep.end_seconds,
+        rep.descent_seconds,
+        rep.ascent_seconds,
+        rep.min_angle_degrees,
+      ].every(Number.isFinite) ||
+      !Number.isInteger(rep.number) ||
+      rep.number <= previousNumber ||
+      rep.number > summary.reps ||
+      rep.start_seconds < 0 ||
+      rep.start_seconds < previousEnd ||
+      rep.bottom_seconds < rep.start_seconds ||
+      rep.end_seconds < rep.bottom_seconds ||
+      rep.end_seconds > summary.active_seconds + 0.001 ||
+      rep.min_angle_degrees < 0 ||
+      rep.min_angle_degrees > 180 ||
+      !['within_rule', 'below_rule', 'unobservable'].includes(rep.rom) ||
+      Math.abs(rep.descent_seconds - (rep.bottom_seconds - rep.start_seconds)) > 0.001 ||
+      Math.abs(rep.ascent_seconds - (rep.end_seconds - rep.bottom_seconds)) > 0.001
+    )
+      throw new Error('单次记录时序或幅度无效。');
+    previousEnd = rep.end_seconds;
+    previousNumber = rep.number;
+  }
   const rom_counts = {
     within_rule: details.filter((r) => r.rom === 'within_rule').length,
     below_rule: details.filter((r) => r.rom === 'below_rule').length,
@@ -63,6 +157,8 @@ export function analyzeLocal(summary: LocalSummary): Report {
       observableSeconds: summary.observable_seconds,
       reps: summary.reps,
       repDetails: details,
+      workSeconds: summary.work_seconds,
+      restSeconds: summary.rest_seconds,
     }),
     daily: dailyRequirement({
       weightKg: summary.profile.weight_kg,
@@ -89,6 +185,8 @@ export function analyzeLocal(summary: LocalSummary): Report {
       reason,
       blocked,
       status: blocked ? 'blocked' : 'pending',
+      proposal_id: `${summary.session_id}:${summary.input_version}`,
+      decided_at: null,
     },
     trace: [
       {
@@ -121,43 +219,75 @@ export function analyzeLocal(summary: LocalSummary): Report {
       },
     ],
   };
-  lastReport = report;
+  lastReport = structuredClone(report);
+  reports.set(summary.session_id, structuredClone(report));
+  if (reports.size > 100) reports.delete(reports.keys().next().value!);
   if (summary.persist) saveHistory(report);
   return report;
 }
 
 export function latestReport() {
-  return lastReport;
+  return lastReport ? structuredClone(lastReport) : null;
 }
 
-export function acceptLocal(report: Report): Report {
-  if (report.proposal.blocked) throw new Error('不适报告已阻止继续训练。');
+export function decideLocal(report: Report, decision: 'accepted' | 'rejected'): Report {
+  const current = reportFor(report.session_id);
+  if (
+    current.input_version !== report.input_version ||
+    current.proposal.proposal_id !== report.proposal.proposal_id
+  )
+    throw new Error('提案已过期，请查看当前版本。');
+  if (current.proposal.blocked) throw new Error('不适报告已阻止继续训练。');
+  if (current.proposal.status === decision) return current;
+  if (current.proposal.status !== 'pending') throw new Error('已作出的决定不能被覆盖。');
   const next = {
-    ...report,
-    proposal: { ...report.proposal, status: 'accepted' },
+    ...current,
+    proposal: { ...current.proposal, status: decision, decided_at: new Date().toISOString() },
   };
-  if (report.saved) saveHistory(next);
-  return next;
+  if (current.saved) saveHistory(next);
+  reports.set(next.session_id, structuredClone(next));
+  lastReport = next;
+  return structuredClone(next);
 }
+
+export const acceptLocal = (report: Report) => decideLocal(report, 'accepted');
 
 export function estimateFood(
   query: string,
   grams?: number,
   extra?: { food_id?: string; kcal_per_100g?: number },
 ) {
-  return estimateFoods([{ query, food_id: extra?.food_id, grams, kcal_per_100g: extra?.kcal_per_100g }]);
+  return estimateFoods([
+    { query, food_id: extra?.food_id, grams, kcal_per_100g: extra?.kcal_per_100g },
+  ]);
 }
 
 export function loadHistory(): Report[] {
   try {
-    return JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]');
+    const items = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]');
+    return Array.isArray(items)
+      ? items
+          .filter(
+            (item) =>
+              item &&
+              typeof item.session_id === 'string' &&
+              item.proposal &&
+              Array.isArray(item.trace),
+          )
+          .slice(0, 20)
+      : [];
   } catch {
     return [];
   }
 }
 
 export function clearHistory() {
-  sessionStorage.removeItem(HISTORY_KEY);
+  try {
+    sessionStorage.removeItem(HISTORY_KEY);
+  } finally {
+    reports.clear();
+    lastReport = null;
+  }
 }
 
 function saveHistory(report: Report) {

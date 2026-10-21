@@ -40,6 +40,10 @@ exercise：30 个居家动作 id（深蹲、弓步、俯卧撑、波比、空击
 
 确认 body：`{"input_version":1}`。不存在的当前会话 404；重复／旧版本更新、旧版本确认、不适禁止继续均 409；schema 不合法 422。accept 幂等地返回已确认状态，不自动启动摄像头或运动。
 
+2026-10-21：新增 `/api/sessions/{id}/reject`，body 同 accept；支持 `proposal_id`（推荐随 input_version 一并发送，兼容旧调用时可省）。当前 ID 为 session_id:input_version。响应记录 decided_at；同一终态重复提交幂等，已接受不能改拒绝，已拒绝不能改接受；旧版本或错误提案身份 409。浏览器采用同样状态规则和按 session 查询的解释，不再从全局最近报告解释其他会话。
+
+摘要新增成对的 `work_seconds/rest_seconds`，非负有限且和不得超过 observable_seconds；总时钟不含暂停。未提供分段的旧摘要仅使用可观察深蹲完整周期，其余标未知，不用次数估时。energy 新增 available/unknown_seconds，数值仅覆盖已分类片段；无已分类片段时 available=false，界面显示无法估算而不是零消耗。两端共享参数和黄金样例。
+
 ## 饮食请求
 
 ```json

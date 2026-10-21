@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - frontend/**
+      - shared/**
       - .github/workflows/pages.yml
       - README.md
 permissions:

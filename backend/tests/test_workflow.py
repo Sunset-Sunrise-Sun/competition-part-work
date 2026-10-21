@@ -61,8 +61,8 @@ def test_video_source_and_body_profile_accepted():
 
 
 def test_energy_scales_with_weight_and_duration():
-    a = analyze(SessionSummary(**payload(profile={"weight_kg": 50})))
-    b = analyze(SessionSummary(**payload(profile={"weight_kg": 100})))
+    a = analyze(SessionSummary(**payload(profile={"weight_kg": 50},work_seconds=30,rest_seconds=20)))
+    b = analyze(SessionSummary(**payload(profile={"weight_kg": 100},work_seconds=30,rest_seconds=20)))
     assert abs(b["energy"]["low_kcal"] - 2 * a["energy"]["low_kcal"]) <= 0.1
     assert a["energy"]["daily"]["need_kcal"] > 0
     assert b["energy"]["daily"]["need_kcal"] > a["energy"]["daily"]["need_kcal"]
@@ -106,3 +106,23 @@ def test_rep_details_reject_wrong_exercise_or_out_of_session():
                   descent_seconds=1, ascent_seconds=1, min_angle_degrees=120, rom="unobservable")
     assert client.post("/api/sessions/analyze",json=payload(exercise="jumping_jack",rep_details=[detail])).status_code == 422
     assert client.post("/api/sessions/analyze",json=payload(active_seconds=2,observable_seconds=2,rep_details=[detail])).status_code == 422
+
+
+def test_final_decisions_are_idempotent_and_immutable():
+    reports.clear()
+    report = client.post("/api/sessions/analyze",json=payload()).json()
+    decision = {"input_version":1,"proposal_id":report["proposal"]["proposal_id"]}
+    first=client.post("/api/sessions/test-session/reject",json=decision)
+    assert first.status_code == 200
+    assert first.json()["proposal"]["status"] == "rejected"
+    assert first.json()["proposal"]["decided_at"]
+    assert client.post("/api/sessions/test-session/reject",json=decision).json() == first.json()
+    assert client.post("/api/sessions/test-session/accept",json=decision).status_code == 409
+
+
+def test_wrong_proposal_identity_and_classification_rejected():
+    reports.clear()
+    client.post("/api/sessions/analyze",json=payload())
+    assert client.post("/api/sessions/test-session/accept",json={"input_version":1,"proposal_id":"other"}).status_code == 409
+    assert client.post("/api/sessions/analyze",json=payload(work_seconds=60,rest_seconds=0)).status_code == 422
+    assert client.post("/api/sessions/analyze",json=payload(work_seconds=5)).status_code == 422

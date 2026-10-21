@@ -1,0 +1,10 @@
+[
+  {"name":"keep baseline","input":{"reps":12,"fatigue":4},"expected":{"target_reps":12,"rest_seconds":60,"status":"pending","blocked":false}},
+  {"name":"high fatigue","input":{"reps":12,"fatigue":8},"expected":{"target_reps":10,"rest_seconds":90,"status":"pending","blocked":false}},
+  {"name":"incomplete","input":{"reps":6,"fatigue":3},"expected":{"target_reps":10,"rest_seconds":90,"status":"pending","blocked":false}},
+  {"name":"low evidence","input":{"reps":0,"fatigue":8,"observable_seconds":0},"expected":{"target_reps":12,"rest_seconds":60,"status":"pending","blocked":false}},
+  {"name":"short duration","input":{"reps":1,"fatigue":8,"active_seconds":5,"observable_seconds":5},"expected":{"target_reps":12,"rest_seconds":60,"status":"pending","blocked":false}},
+  {"name":"discomfort overrides","input":{"reps":12,"fatigue":1,"discomfort":true},"expected":{"target_reps":12,"rest_seconds":60,"status":"blocked","blocked":true}},
+  {"name":"repeated deviations","input":{"reps":12,"fatigue":3,"form_events":3},"expected":{"target_reps":12,"rest_seconds":75,"status":"pending","blocked":false}},
+  {"name":"boundary fatigue","input":{"reps":12,"fatigue":7},"expected":{"target_reps":10,"rest_seconds":90,"status":"pending","blocked":false}}
+]
