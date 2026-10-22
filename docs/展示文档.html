@@ -488,8 +488,8 @@
 <tr>
 <td>杨开元</td>
 <td>S01 合同与规则版本；S06/S09 存储失败原子性；S07 跨端对照；S13 固定计划对照；S15 检查脚本与技术稿准备</td>
-<td>JSON Schema 与共用参数；24 场景两端一致，规则预期 24/24、固定计划 11/24；故障/删除测试；verify_release、CI artifact、TECHNICAL_BRIEF</td>
-<td>UI 实机复核、远端 CI 与最终候选冻结、真实结果技术稿、10/29 全员验收与正式打包</td>
+<td>JSON Schema 与共用参数；24 场景两端一致，规则预期 24/24、固定计划 11/24；故障/删除测试；verify_release、CI artifact、TECHNICAL_BRIEF；功能提交 8683b49 的远端 CI/Pages 成功</td>
+<td>UI 实机复核、最终候选冻结、真实结果技术稿、10/29 全员验收与正式打包</td>
 </tr>
 <tr>
 <td>刘小凡</td>
@@ -539,7 +539,7 @@
 <tr>
 <td>S15 发布准备</td>
 <td><code>scripts/verify_release.py</code>；CI 增加跨端/回放报告 artifact；<a href="TECHNICAL_BRIEF.md">技术说明</a></td>
-<td>本地软件检查通过；远端 CI 状态、真人/设备结果及最终候选版需另验</td>
+<td>本地软件检查及功能提交 8683b49 的远端 CI/Pages 通过；真人/设备结果及最终候选版需另验</td>
 </tr>
 <tr>
 <td>S17 最终交付</td>
@@ -608,10 +608,11 @@
 <li>12 个人工构造的关键点片段：每动作正常/静止/遮挡/出画/缺点/退化各一个；逐条预测及门控结果见证据文件。每动作计数有效样例仅 2 个，其他 4 个负例全部保留，不能写成人群样本量。</li>
 </ul>
 <p>可公开的软件结果快照：<a href="evidence/plan_comparison_2026-10-22.json"><code>evidence/plan_comparison_2026-10-22.json</code></a>、<a href="evidence/synthetic_replay_2026-10-22.json"><code>evidence/synthetic_replay_2026-10-22.json</code></a>。重跑产物在 <code>.localrun/</code>，不自动覆盖公开快照。快照携带源代码/输入哈希，用于核对其适用版本。</p>
+<p>远端已核对功能提交 <code>8683b49602a03b5c9809d1aa063269c39f46080d</code>：<a href="https://github.com/yky666/ai_health_assistant/actions/runs/39791151553">Validate LocalFit 检查成功</a>、<a href="https://github.com/yky666/ai_health_assistant/actions/runs/39791151603">GitHub Pages 部署成功</a>。两个运行页面的 commit 链接均指向该版本；本段是随后追加的文档记录，不代替真人验收。</p>
 <p>没有完成：真实摄像头精度、真实网页采集/下载、全流程视觉验收、跨设备安装、整机断网重启、设备性能、MET/食物来源复核、参赛材料最终版。回放精度只属于关键点规则层。</p>
 <h2>接下来按此顺序交接</h2>
 <ol>
-<li>杨开元与王靖贻：按 <a href="ACCEPTANCE_CHECKLIST.md">验收清单</a> 验 UI 的接受/拒绝/删除/切模式/存储失败提示；核对远端 CI，冻结可复现 commit。</li>
+<li>杨开元与王靖贻：按 <a href="ACCEPTANCE_CHECKLIST.md">验收清单</a> 验 UI 的接受/拒绝/删除/切模式/存储失败提示；后续候选版本继续核对远端 CI，冻结可复现 commit。</li>
 <li>刘小凡与徐倩茹：按规范采集真人两动作与异常片段，独立人工计数/区间标注，再运行回放命令，汇总真实组数、MAE、门控错误和失败案例。</li>
 <li>刘小凡复核误计/漏计和机位失败；仅依据调参集改阈值，更新 algorithm_version 后在留出参与者上重新评测。</li>
 <li>王靖贻完成普通笔记本性能/断网重启；徐倩茹复核来源及材料；杨开元将真实结果更新技术稿，在 10/28 固定候选、10/29 18:00 前组织签核。</li>

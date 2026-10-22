@@ -11,7 +11,7 @@
 | S07 统一规则和能耗 | 两端计划阈值共用；24 组相同摘要直接执行 TS/Python，比较提案、证据、数值能耗及版本 | 24/24 跨端一致；MET/生理精度仍未验证 |
 | S09 存储/删除 | 浏览器保存失败后不占用新版本，可原版本重试；决定保存失败保留 pending；删除使旧提案/解释失效 | 浏览器模拟存储与临时 SQLite 故障测试通过；标签页实机生命周期待验 |
 | S13 固定计划对照 | `scripts/evaluate_plans.py`；24 组输入、逐例理由/约束/固定与自适应结果、源代码哈希 | 合成规则对照完成；不代表多 Agent 或健康效果收益 |
-| S15 发布准备 | `scripts/verify_release.py`；CI 增加跨端/回放报告 artifact；[技术说明](TECHNICAL_BRIEF.md) | 本地软件检查通过；远端 CI 状态、真人/设备结果及最终候选版需另验 |
+| S15 发布准备 | `scripts/verify_release.py`；CI 增加跨端/回放报告 artifact；[技术说明](TECHNICAL_BRIEF.md) | 本地软件检查及功能提交 8683b49 的远端 CI/Pages 通过；真人/设备结果及最终候选版需另验 |
 | S17 最终交付 | 明确复核步骤和 10/29 内部截止，保留人工验收表 | 尚未执行正式最终包与四人签核 |
 
 规则对照：自适应方案符合团队预设期望 24/24，固定计划 11/24。固定计划保留相同不适阻断，其他条件维持原目标+60秒休息。期望本就按团队规则编写，**这个差异证明触发逻辑生效，不证明自适应更健康或用户更喜欢**。无加量、不适阻断、等待确认三项软件约束全部通过。
@@ -43,11 +43,13 @@ Windows 本地执行 `python scripts/verify_release.py --offline-assets`：
 
 可公开的软件结果快照：[`evidence/plan_comparison_2026-10-22.json`](evidence/plan_comparison_2026-10-22.json)、[`evidence/synthetic_replay_2026-10-22.json`](evidence/synthetic_replay_2026-10-22.json)。重跑产物在 `.localrun/`，不自动覆盖公开快照。快照携带源代码/输入哈希，用于核对其适用版本。
 
+远端已核对功能提交 `8683b49602a03b5c9809d1aa063269c39f46080d`：[Validate LocalFit 检查成功](https://github.com/yky666/ai_health_assistant/actions/runs/39791151553)、[GitHub Pages 部署成功](https://github.com/yky666/ai_health_assistant/actions/runs/39791151603)。两个运行页面的 commit 链接均指向该版本；本段是随后追加的文档记录，不代替真人验收。
+
 没有完成：真实摄像头精度、真实网页采集/下载、全流程视觉验收、跨设备安装、整机断网重启、设备性能、MET/食物来源复核、参赛材料最终版。回放精度只属于关键点规则层。
 
 ## 接下来按此顺序交接
 
-1. 杨开元与王靖贻：按 [验收清单](ACCEPTANCE_CHECKLIST.md) 验 UI 的接受/拒绝/删除/切模式/存储失败提示；核对远端 CI，冻结可复现 commit。
+1. 杨开元与王靖贻：按 [验收清单](ACCEPTANCE_CHECKLIST.md) 验 UI 的接受/拒绝/删除/切模式/存储失败提示；后续候选版本继续核对远端 CI，冻结可复现 commit。
 2. 刘小凡与徐倩茹：按规范采集真人两动作与异常片段，独立人工计数/区间标注，再运行回放命令，汇总真实组数、MAE、门控错误和失败案例。
 3. 刘小凡复核误计/漏计和机位失败；仅依据调参集改阈值，更新 algorithm_version 后在留出参与者上重新评测。
 4. 王靖贻完成普通笔记本性能/断网重启；徐倩茹复核来源及材料；杨开元将真实结果更新技术稿，在 10/28 固定候选、10/29 18:00 前组织签核。
