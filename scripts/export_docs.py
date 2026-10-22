@@ -4,7 +4,7 @@ import html
 import markdown
 
 root = Path(__file__).resolve().parents[1]
-files = ["冲刺分工_2026-10-29.md", "IMPLEMENTATION_2026-10-21.md", "ACCEPTANCE_CHECKLIST.md", "方案分析.md", "VISION_DEMOS_REVIEW.md", "ARCHITECTURE.md", "ROADMAP.md", "TASKS.md", "EVALUATION.md", "API.md", "PRIVACY.md", "SETUP.md", "DEPENDENCIES.md", "SOURCES.md", "ADR.md", "VALIDATION.md"]
+files = ["冲刺分工_2026-10-29.md", "IMPLEMENTATION_2026-10-22.md", "CONTRACT_FREEZE_2026-10-22.md", "ANNOTATION_PROTOCOL.md", "TECHNICAL_BRIEF.md", "IMPLEMENTATION_2026-10-21.md", "ACCEPTANCE_CHECKLIST.md", "方案分析.md", "VISION_DEMOS_REVIEW.md", "ARCHITECTURE.md", "ROADMAP.md", "TASKS.md", "EVALUATION.md", "API.md", "PRIVACY.md", "SETUP.md", "DEPENDENCIES.md", "SOURCES.md", "ADR.md", "VALIDATION.md"]
 sections = []
 links = []
 for i, filename in enumerate(files):

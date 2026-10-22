@@ -43,7 +43,7 @@ describe('browser coach fallback', () => {
       ...base,
       work_seconds: undefined,
       rest_seconds: undefined,
-      ...entry.input,
+      ...(entry.input as Partial<LocalSummary>),
     });
     expect(result.proposal).toMatchObject(entry.expected);
   });
@@ -124,5 +124,31 @@ describe('browser coach fallback', () => {
     });
     expect(report.proposal.blocked).toBe(true);
     expect(() => acceptLocal(report)).toThrow();
+  });
+  it('failed requested storage leaves no committed version, and can retry', () => {
+    const setItem = vi.spyOn(sessionStorage, 'setItem').mockImplementationOnce(() => {
+      throw new Error('quota');
+    });
+    expect(() => analyzeLocal({ ...base, persist: true })).toThrow('quota');
+    expect(() => reportFor(base.session_id)).toThrow();
+    expect(analyzeLocal({ ...base, persist: true }).input_version).toBe(1);
+    setItem.mockRestore();
+  });
+  it('failed decision save remains pending and can retry', () => {
+    const report = analyzeLocal({ ...base, persist: true });
+    vi.spyOn(sessionStorage, 'setItem').mockImplementationOnce(() => {
+      throw new Error('quota');
+    });
+    expect(() => acceptLocal(report)).toThrow('quota');
+    expect(reportFor(base.session_id).proposal.status).toBe('pending');
+    expect(acceptLocal(report).proposal.status).toBe('accepted');
+  });
+  it.each([
+    { schema_version: 'future-v2' },
+    { discomfort: 'false' },
+    { persist: 'false' },
+    { profile: { weight_kg: 65, goal: 'unsupported' } },
+  ])('rejects invalid contract fields: %j', (change) => {
+    expect(() => analyzeLocal({ ...base, ...change } as LocalSummary)).toThrow();
   });
 });

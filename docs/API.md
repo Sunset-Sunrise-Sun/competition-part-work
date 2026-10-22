@@ -2,11 +2,14 @@
 
 后端 `http://127.0.0.1:8000`，交互式 OpenAPI `/docs`。只监听回环地址，默认单用户、单进程。不提供视频上传接口。
 
+10/22 冻结合同：`localfit.session.v1`；报告与 health 返回 schema_version、policy_version。请求 JSON Schema 见 `shared/session.schema.json`，规则参数与版本见 `shared/contract.json`，联调要求见 [合同冻结](CONTRACT_FREEZE_2026-10-22.md)。缺省 schema_version 按 v1；未知版本拒绝；discomfort/persist 不接受字符串布尔值。存储故障不会提前提交内存版本或决定，原请求可重试。
+
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | /api/health | 服务状态与规则运行模式 |
 | POST | /api/sessions/analyze | 分析摘要并生成待确认提案 |
 | POST | /api/sessions/{id}/accept | 检查版本并接受提案 |
+| POST | /api/sessions/{id}/reject | 检查版本并拒绝提案，保持原训练目标 |
 | POST | /api/sessions/{id}/explanation | 可选本地 LLM 解释，失败降级 |
 | GET | /api/history | 读取最近 50 条已授权保存的摘要 |
 | DELETE | /api/history | 删除本机保存摘要及当前内存结果 |
@@ -32,11 +35,11 @@
 }
 ```
 
-exercise：30 个居家动作 id（深蹲、弓步、俯卧撑、波比、空击等，见网页下拉）；source：simulation/camera/video；fatigue：0–10。observable_seconds 不得大于 active_seconds。数值范围以 schema 为准。身高、体重与肌肉分布由用户填写，用于 SMPL 人体定制，不由视频推断。
+exercise：动作目录 id，正式核心为 squat/jumping_jack，其余实验；source：simulation/camera/video；fatigue：0–10。observable_seconds 不得大于 active_seconds。数值范围以 schema 为准。身高、体重与示意外观参数由用户填写，原创演示骨架不测量人体，也不使用官方 SMPL 参数。
 
 可选 `rep_details`（默认空，最多 100 条）为深蹲单次记录，字段：number、start_seconds、bottom_seconds、end_seconds、descent_seconds、ascent_seconds、min_angle_degrees、rom。rom 为 within_rule/below_rule/unobservable，只代表实验幅度规则。时间为不含暂停的活动时钟；阶段差值必须一致，次数递增、不重叠且位于本组时长以内。开合跳暂不接受此字段。结果回传用于复盘、trace 与保存。
 
-响应包含 coverage、completion、energy、proposal、trace、saved。energy 是 gross_scenario_estimate：含静息的演示假设范围，不是统计区间。proposal 状态 pending/blocked/accepted。
+响应包含 coverage、completion、energy、proposal、trace、saved。energy 是 gross_scenario_estimate：含静息的演示假设范围，不是统计区间。proposal 状态 pending/blocked/accepted/rejected。
 
 确认 body：`{"input_version":1}`。不存在的当前会话 404；重复／旧版本更新、旧版本确认、不适禁止继续均 409；schema 不合法 422。accept 幂等地返回已确认状态，不自动启动摄像头或运动。
 

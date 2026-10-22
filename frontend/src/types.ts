@@ -16,6 +16,7 @@ export type Metrics = {
   phase: string;
   quality: boolean;
   quality_status?: 'observed' | 'unknown';
+  quality_code?: string;
   unknown_reason?: string;
   hint: string;
   angle: number;
@@ -23,6 +24,8 @@ export type Metrics = {
   squatReps: SquatRep[];
 };
 export type Report = {
+  schema_version?: string;
+  policy_version?: string;
   session_id: string;
   input_version: number;
   source: string;

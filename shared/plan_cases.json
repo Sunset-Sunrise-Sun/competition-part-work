@@ -1,10 +1,336 @@
 [
-  {"name":"keep baseline","input":{"reps":12,"fatigue":4},"expected":{"target_reps":12,"rest_seconds":60,"status":"pending","blocked":false}},
-  {"name":"high fatigue","input":{"reps":12,"fatigue":8},"expected":{"target_reps":10,"rest_seconds":90,"status":"pending","blocked":false}},
-  {"name":"incomplete","input":{"reps":6,"fatigue":3},"expected":{"target_reps":10,"rest_seconds":90,"status":"pending","blocked":false}},
-  {"name":"low evidence","input":{"reps":0,"fatigue":8,"observable_seconds":0},"expected":{"target_reps":12,"rest_seconds":60,"status":"pending","blocked":false}},
-  {"name":"short duration","input":{"reps":1,"fatigue":8,"active_seconds":5,"observable_seconds":5},"expected":{"target_reps":12,"rest_seconds":60,"status":"pending","blocked":false}},
-  {"name":"discomfort overrides","input":{"reps":12,"fatigue":1,"discomfort":true},"expected":{"target_reps":12,"rest_seconds":60,"status":"blocked","blocked":true}},
-  {"name":"repeated deviations","input":{"reps":12,"fatigue":3,"form_events":3},"expected":{"target_reps":12,"rest_seconds":75,"status":"pending","blocked":false}},
-  {"name":"boundary fatigue","input":{"reps":12,"fatigue":7},"expected":{"target_reps":10,"rest_seconds":90,"status":"pending","blocked":false}}
+  {
+    "name": "keep baseline",
+    "input": {
+      "reps": 12,
+      "fatigue": 4
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "high fatigue",
+    "input": {
+      "reps": 12,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "incomplete",
+    "input": {
+      "reps": 6,
+      "fatigue": 3
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "low evidence",
+    "input": {
+      "reps": 0,
+      "fatigue": 8,
+      "observable_seconds": 0
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "short duration",
+    "input": {
+      "reps": 1,
+      "fatigue": 8,
+      "active_seconds": 5,
+      "observable_seconds": 5
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "discomfort overrides",
+    "input": {
+      "reps": 12,
+      "fatigue": 1,
+      "discomfort": true
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "blocked",
+      "blocked": true
+    }
+  },
+  {
+    "name": "repeated deviations",
+    "input": {
+      "reps": 12,
+      "fatigue": 3,
+      "form_events": 3
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 75,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "boundary fatigue",
+    "input": {
+      "reps": 12,
+      "fatigue": 7
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "fatigue below boundary",
+    "input": {
+      "reps": 12,
+      "fatigue": 6
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "completion exactly 70 percent",
+    "input": {
+      "reps": 7,
+      "target_reps": 10,
+      "fatigue": 4
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "completion below 70 percent",
+    "input": {
+      "reps": 6,
+      "target_reps": 10,
+      "fatigue": 4
+    },
+    "expected": {
+      "target_reps": 8,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "coverage exactly 60 percent",
+    "input": {
+      "reps": 12,
+      "observable_seconds": 36,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "coverage just below 60 percent",
+    "input": {
+      "reps": 12,
+      "observable_seconds": 35.999,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "duration exactly ten",
+    "input": {
+      "reps": 12,
+      "active_seconds": 10,
+      "observable_seconds": 10,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "duration below ten",
+    "input": {
+      "reps": 12,
+      "active_seconds": 9.999,
+      "observable_seconds": 9.999,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "two deviations",
+    "input": {
+      "reps": 12,
+      "form_events": 2,
+      "fatigue": 4
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "fatigue precedes deviations",
+    "input": {
+      "reps": 12,
+      "form_events": 4,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "minimum target clamps",
+    "input": {
+      "reps": 1,
+      "target_reps": 1,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 1,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "maximum target reduces",
+    "input": {
+      "reps": 100,
+      "target_reps": 100,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 80,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "low evidence precedes deviations",
+    "input": {
+      "reps": 12,
+      "observable_seconds": 1,
+      "form_events": 5,
+      "fatigue": 4
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "surplus reps never increase",
+    "input": {
+      "reps": 20,
+      "fatigue": 0
+    },
+    "expected": {
+      "target_reps": 12,
+      "rest_seconds": 60,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "jack same policy",
+    "input": {
+      "exercise": "jumping_jack",
+      "reps": 12,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "video same policy",
+    "input": {
+      "source": "video",
+      "reps": 12,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 10,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  },
+  {
+    "name": "round half up target",
+    "input": {
+      "reps": 3,
+      "target_reps": 3,
+      "fatigue": 8
+    },
+    "expected": {
+      "target_reps": 2,
+      "rest_seconds": 90,
+      "status": "pending",
+      "blocked": false
+    }
+  }
 ]

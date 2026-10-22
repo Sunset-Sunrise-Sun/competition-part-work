@@ -9,6 +9,7 @@ from .catalog import match_food, parse_query
 from .schemas import SessionSummary, AcceptProposal, FoodEntry
 from .storage import Storage
 from .local_llm import explain
+from .contract import CONTRACT
 
 ROOT = Path(__file__).resolve().parents[2]
 app = FastAPI(title="LocalFit Agent", version="0.1.0")
@@ -22,6 +23,7 @@ lock = RLock()
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "0.1.0", "agent_runtime": "deterministic",
+            "schema_version": CONTRACT["schema_version"], "policy_version": CONTRACT["policy_version"],
             "video_upload": False, "cloud_required": False}
 
 
@@ -68,11 +70,12 @@ def decide(session_id: str, request: AcceptProposal, decision: str):
             return report
         if status != "pending":
             raise HTTPException(409, "Decision already finalized")
-        report["proposal"]["status"] = decision
-        report["proposal"]["decided_at"] = datetime.now(timezone.utc).isoformat()
-        if report["saved"]:
-            storage.save(report)
-        return report
+        updated = {**report, "proposal": {**report["proposal"], "status": decision,
+                   "decided_at": datetime.now(timezone.utc).isoformat()}}
+        if updated["saved"]:
+            storage.save(updated)
+        reports[session_id] = updated
+        return updated
 
 
 @app.post("/api/sessions/{session_id}/explanation")

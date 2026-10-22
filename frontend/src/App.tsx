@@ -22,6 +22,7 @@ import { EXERCISE_GROUPS, EXERCISE_IDS, EXERCISES, exerciseLabel, isExercise } f
 import { ExerciseEngine, simulatedPose } from './engine';
 import { acceptReport, decideReport, request } from './api';
 import { ActivityTracker, type ActivityState } from './activity';
+import { LandmarkRecorder, type ReplayClip } from './replay';
 import { runtimeMode, strictOffline } from './runtime';
 import { drawAvatar, drawRawPose, drawRetargetedOverlay, drawVideoFrame, syncCanvas } from './draw';
 import { dailyRequirement, sessionEnergy, type ActivityLevel, type Sex } from './energy';
@@ -69,6 +70,8 @@ export default function App() {
   const [fatigue, setFatigue] = useState(4);
   const [discomfort, setDiscomfort] = useState(false);
   const [persist, setPersist] = useState(false);
+  const [captureLandmarks, setCaptureLandmarks] = useState(false);
+  const recorder = useRef(new LandmarkRecorder());
   const [report, setReport] = useState<Report | null>(null);
   const [history, setHistory] = useState<Report[]>([]);
   const [busy, setBusy] = useState(false);
@@ -161,6 +164,7 @@ export default function App() {
   }, [showRaw]);
   useEffect(() => {
     engine.current = new ExerciseEngine(exercise, threshold);
+    recorder.current = new LandmarkRecorder();
     generation.current++;
     live.current.elapsed = 0;
     live.current.observable = 0;
@@ -182,6 +186,8 @@ export default function App() {
     points.current = data.points;
     worldPoints.current = data.worldPoints ?? [];
     if (live.current.running && live.current.source !== 'simulation') {
+      if (captureLandmarks)
+        recorder.current.add(data.points, data.activeElapsedMs, data.aspectRatio ?? 1);
       const result = engine.current.update(data.points, data.activeElapsedMs, data.aspectRatio);
       metricRef.current = result;
       live.current.quality = result.quality;
@@ -449,6 +455,7 @@ export default function App() {
   }, [exercise]);
 
   function reset() {
+    recorder.current = new LandmarkRecorder();
     generation.current++;
     live.current.running = false;
     setRunning(false);
@@ -488,6 +495,7 @@ export default function App() {
   }
   function onVideoFile(file?: File) {
     if (!file) return;
+    reset();
     if (videoUrl.current) URL.revokeObjectURL(videoUrl.current);
     videoUrl.current = URL.createObjectURL(file);
     setVideoName(file.name);
@@ -532,11 +540,39 @@ export default function App() {
       }
     }
     live.current.running = !live.current.running;
+    engine.current.interrupt();
+    recorder.current.boundary();
     generation.current++;
     live.current.activityState = 'unknown';
     activityTracker.current = new ActivityTracker();
     setRunning(live.current.running);
     setError('');
+  }
+  function exportLandmarks() {
+    if (exercise !== 'squat' && exercise !== 'jumping_jack') return;
+    const clip: ReplayClip = {
+      format: 'localfit.landmarks.v1',
+      clip_id: `clip-${crypto.randomUUID()}`,
+      participant_id: 'TO_LABEL',
+      exercise,
+      source: sourceMode,
+      evidence_kind: sourceMode === 'simulation' ? 'synthetic' : 'recorded_landmarks',
+      scenario: 'TO_LABEL',
+      reference_reps: null,
+      count_eligible: null,
+      exclusion_reason: '',
+      down_threshold: threshold,
+      truncated: recorder.current.truncated,
+      frames: recorder.current.frames,
+    };
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify([clip])], { type: 'application/json' }),
+    );
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${clip.clip_id}.json`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   async function confirmFood(query = foodQuery, amount = grams) {
     if (!query.trim() && !customKcal) {
@@ -1029,6 +1065,39 @@ export default function App() {
                 {busy ? '生成报告中…' : '结束本组并复盘'}
                 <ArrowRight size={17} />
               </button>
+              {(exercise === 'squat' || exercise === 'jumping_jack') &&
+                sourceMode !== 'simulation' && (
+                  <details>
+                    <summary>算法评测采集</summary>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={captureLandmarks}
+                        disabled={!captureLandmarks && (running || elapsed > 0)}
+                        onChange={(event) => {
+                          setCaptureLandmarks(event.target.checked);
+                          recorder.current = new LandmarkRecorder();
+                        }}
+                      />
+                      我同意在本页内存记录关键点，用于本次算法评测
+                    </label>
+                    <p className="muted">
+                      仅含坐标与训练时间，不含影像；手动导出后交标注人员。重置本组或关闭页面会清空，最多
+                      20,000 帧。
+                    </p>
+                    {recorder.current.truncated && (
+                      <p role="alert">
+                        记录已达到上限，请重录较短片段；截断记录不能用于完整组评测。
+                      </p>
+                    )}
+                    <button
+                      disabled={running || recorder.current.frames.length === 0}
+                      onClick={exportLandmarks}
+                    >
+                      导出关键点评测 JSON（{recorder.current.frames.length} 帧）
+                    </button>
+                  </details>
+                )}
             </section>
           </div>
           <div className="bottom-grid body-grid">
@@ -1453,6 +1522,8 @@ export default function App() {
                   onClick={async () => {
                     try {
                       await request('/history', { method: 'DELETE' });
+                      recorder.current = new LandmarkRecorder();
+                      setCaptureLandmarks(false);
                       setHistory([]);
                       setReport(null);
                       setExplanation('');

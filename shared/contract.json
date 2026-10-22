@@ -1,0 +1,24 @@
+{
+  "schema_version": "localfit.session.v1",
+  "policy_version": "localfit.rules.2026-10-22",
+  "algorithm_version": "localfit.pose.2026-10-22",
+  "core_exercises": ["squat", "jumping_jack"],
+  "policy": {
+    "minimum_coverage": 0.6,
+    "minimum_seconds": 10,
+    "high_fatigue": 7,
+    "minimum_completion": 0.7,
+    "reduction_factor": 0.8,
+    "deviation_limit": 2,
+    "baseline_rest_seconds": 60,
+    "reduced_rest_seconds": 90,
+    "deviation_rest_seconds": 75
+  },
+  "pose": {
+    "minimum_visibility": 0.65,
+    "maximum_gap_ms": 500,
+    "jack_dwell_ms": 100,
+    "jack_cycle_ms": 450,
+    "jack_min_hip_width": 0.025
+  }
+}

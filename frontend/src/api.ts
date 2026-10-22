@@ -9,6 +9,7 @@ import {
 } from './localCoach';
 import { runtimeMode } from './runtime';
 import type { Report } from './types';
+import contract from '../../shared/contract.json';
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (runtimeMode === 'browser') return localRequest<T>(path, options);
@@ -37,7 +38,13 @@ export const acceptReport = (report: Report) => decideReport(report, 'accept');
 function localRequest<T>(path: string, options: RequestInit = {}): T {
   const method = (options.method || 'GET').toUpperCase();
   const body = options.body ? JSON.parse(String(options.body)) : null;
-  if (path === '/health' && method === 'GET') return { status: 'browser', version: '0.2.0' } as T;
+  if (path === '/health' && method === 'GET')
+    return {
+      status: 'browser',
+      version: '0.2.0',
+      schema_version: contract.schema_version,
+      policy_version: contract.policy_version,
+    } as T;
   if (path === '/sessions/analyze' && method === 'POST')
     return analyzeLocal(body as LocalSummary) as T;
   const route = path.match(/^\/sessions\/([^/]+)\/(accept|reject|explanation)$/);

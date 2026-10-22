@@ -34,7 +34,19 @@ $env:LOCAL_LLM_URL = 'http://127.0.0.1:8080'
 - 模型下载被代理阻断：配置所在终端的网络代理；不要把代理凭据写入仓库。
 - 单服务展示：准备模型后 `npm run build`，重启后端，打开 8000；后端在启动时检查 dist 是否存在。
 - `vite preview`：只作静态预览；完整 API 联调请用 dev 或后端单服务。
-- 公网演示：启用 GitHub Pages（Actions 源），不需要自购域名或云主机。静态页在后端不可用时自动降级为浏览器本地教练。不要把无认证的 FastAPI 直接映射到公网。
+- 公网演示：启用 GitHub Pages（Actions 源）。静态页默认使用浏览器教练；本地 backend 模式请求失败会报错，不自动切换模式。不要把无认证的 FastAPI 直接映射到公网。
+
+## 软件发布检查与算法评测
+
+安装前后端依赖后，在根目录执行：
+
+```powershell
+.venv/Scripts/python.exe scripts/verify_release.py --offline-assets
+```
+
+依次运行后端/前端测试、生产构建、24 场景跨端与固定计划对照、12 个合成片段回放、本地模型/WASM 检查；产物在 `.localrun/`。没有准备模型时去掉 `--offline-assets`，但不能据此宣称资源完整。此命令不证明真人精度、视觉 UI、整机断网重启或设备性能。
+
+真人关键点采集、独立标注与回放命令见 [ANNOTATION_PROTOCOL](ANNOTATION_PROTOCOL.md)。原始视频及个人数据放 Git 忽略目录；人工结果核对后才提交允许公开的汇总。
 
 ## 构建展示文档
 

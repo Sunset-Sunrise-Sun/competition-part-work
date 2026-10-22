@@ -2,6 +2,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .catalog import EXERCISE_IDS
+from .contract import CONTRACT
 
 
 class Profile(BaseModel):
@@ -38,6 +39,7 @@ class SquatRep(BaseModel):
 
 
 class SessionSummary(BaseModel):
+    schema_version: Literal["localfit.session.v1"] = CONTRACT["schema_version"]
     session_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     input_version: int = Field(default=1, ge=1)
     exercise: str = Field(min_length=2, max_length=40)
@@ -49,9 +51,9 @@ class SessionSummary(BaseModel):
     rest_seconds: float | None = Field(default=None, ge=0, le=86400)
     form_events: int = Field(ge=0, le=10000)
     fatigue: int = Field(default=4, ge=0, le=10)
-    discomfort: bool = False
+    discomfort: bool = Field(default=False, strict=True)
     target_reps: int = Field(default=12, ge=1, le=100)
-    persist: bool = False
+    persist: bool = Field(default=False, strict=True)
     profile: Profile = Field(default_factory=Profile)
     rep_details: list[SquatRep] = Field(default_factory=list, max_length=100)
 

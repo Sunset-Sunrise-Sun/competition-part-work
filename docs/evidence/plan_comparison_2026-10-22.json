@@ -1,0 +1,1165 @@
+{
+  "evidence_kind": "synthetic_rule_scenarios",
+  "policy_version": "localfit.rules.2026-10-22",
+  "source_sha256": "3c6918b8196e89130c8929d5111cb0146befaabfed57545aded0c7fd60c24519",
+  "scenario_count": 24,
+  "cross_runtime_agreement": 24,
+  "adaptive_expected_matches": 24,
+  "fixed_expected_matches": 11,
+  "all_constraints_pass": true,
+  "limitation": "Scenario expectations encode our policy; this is not human efficacy or multi-agent benefit evidence.",
+  "rows": [
+    {
+      "scenario": "keep baseline",
+      "input": {
+        "session_id": "comparison-0",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 4,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "本次记录暂不支持增加训练量，保持计划并继续观察。"
+    },
+    {
+      "scenario": "high fatigue",
+      "input": {
+        "session_id": "comparison-1",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "incomplete",
+      "input": {
+        "session_id": "comparison-2",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 6,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 3,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "low evidence",
+      "input": {
+        "session_id": "comparison-3",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 0,
+        "active_seconds": 60,
+        "observable_seconds": 0,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "有效观察不足：保持计划，先调整机位或补充训练记录。"
+    },
+    {
+      "scenario": "short duration",
+      "input": {
+        "session_id": "comparison-4",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 1,
+        "active_seconds": 5,
+        "observable_seconds": 5,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "有效观察不足：保持计划，先调整机位或补充训练记录。"
+    },
+    {
+      "scenario": "discomfort overrides",
+      "input": {
+        "session_id": "comparison-5",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 1,
+        "discomfort": true,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "blocked",
+        "blocked": true
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "blocked",
+        "blocked": true
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": true,
+        "status": "blocked"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "用户报告不适：暂停训练，取消继续训练建议。"
+    },
+    {
+      "scenario": "repeated deviations",
+      "input": {
+        "session_id": "comparison-6",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 3,
+        "fatigue": 3,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 75,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 75,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "出现多次可观察偏差或未达到实验幅度，保持次数，增加休息并复核动作。"
+    },
+    {
+      "scenario": "boundary fatigue",
+      "input": {
+        "session_id": "comparison-7",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 7,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "fatigue below boundary",
+      "input": {
+        "session_id": "comparison-8",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 6,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "本次记录暂不支持增加训练量，保持计划并继续观察。"
+    },
+    {
+      "scenario": "completion exactly 70 percent",
+      "input": {
+        "session_id": "comparison-9",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 7,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 4,
+        "discomfort": false,
+        "target_reps": 10,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 10,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "本次记录暂不支持增加训练量，保持计划并继续观察。"
+    },
+    {
+      "scenario": "completion below 70 percent",
+      "input": {
+        "session_id": "comparison-10",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 6,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 4,
+        "discomfort": false,
+        "target_reps": 10,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 8,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 8,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 10,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "coverage exactly 60 percent",
+      "input": {
+        "session_id": "comparison-11",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 36,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "coverage just below 60 percent",
+      "input": {
+        "session_id": "comparison-12",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 35.999,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "有效观察不足：保持计划，先调整机位或补充训练记录。"
+    },
+    {
+      "scenario": "duration exactly ten",
+      "input": {
+        "session_id": "comparison-13",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 10,
+        "observable_seconds": 10,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "duration below ten",
+      "input": {
+        "session_id": "comparison-14",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 9.999,
+        "observable_seconds": 9.999,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "有效观察不足：保持计划，先调整机位或补充训练记录。"
+    },
+    {
+      "scenario": "two deviations",
+      "input": {
+        "session_id": "comparison-15",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 2,
+        "fatigue": 4,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "本次记录暂不支持增加训练量，保持计划并继续观察。"
+    },
+    {
+      "scenario": "fatigue precedes deviations",
+      "input": {
+        "session_id": "comparison-16",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 4,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "minimum target clamps",
+      "input": {
+        "session_id": "comparison-17",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 1,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 1,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 1,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 1,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 1,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "maximum target reduces",
+      "input": {
+        "session_id": "comparison-18",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 100,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 100,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 80,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 80,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 100,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "low evidence precedes deviations",
+      "input": {
+        "session_id": "comparison-19",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 1,
+        "form_events": 5,
+        "fatigue": 4,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "有效观察不足：保持计划，先调整机位或补充训练记录。"
+    },
+    {
+      "scenario": "surplus reps never increase",
+      "input": {
+        "session_id": "comparison-20",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 20,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 0,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": true,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "本次记录暂不支持增加训练量，保持计划并继续观察。"
+    },
+    {
+      "scenario": "jack same policy",
+      "input": {
+        "session_id": "comparison-21",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "jumping_jack",
+        "source": "simulation",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "video same policy",
+      "input": {
+        "session_id": "comparison-22",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "video",
+        "reps": 12,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 12,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 10,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 12,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    },
+    {
+      "scenario": "round half up target",
+      "input": {
+        "session_id": "comparison-23",
+        "input_version": 1,
+        "schema_version": "localfit.session.v1",
+        "exercise": "squat",
+        "source": "simulation",
+        "reps": 3,
+        "active_seconds": 60,
+        "observable_seconds": 55,
+        "form_events": 0,
+        "fatigue": 8,
+        "discomfort": false,
+        "target_reps": 3,
+        "profile": {
+          "weight_kg": 65
+        },
+        "persist": false
+      },
+      "expected": {
+        "target_reps": 2,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "adaptive": {
+        "target_reps": 2,
+        "rest_seconds": 90,
+        "status": "pending",
+        "blocked": false
+      },
+      "fixed_with_same_discomfort_gate": {
+        "target_reps": 3,
+        "rest_seconds": 60,
+        "blocked": false,
+        "status": "pending"
+      },
+      "adaptive_matches_expected": true,
+      "fixed_matches_expected": false,
+      "cross_runtime_differences": [],
+      "constraints": {
+        "no_increase": true,
+        "discomfort_blocks": true,
+        "requires_confirmation": true
+      },
+      "reason": "主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。"
+    }
+  ]
+}

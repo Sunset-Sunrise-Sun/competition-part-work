@@ -3,8 +3,11 @@ import { isExercise } from './catalog';
 import { dailyRequirement, sessionEnergy, type ActivityLevel, type Sex } from './energy';
 import { estimateFoods } from './foods';
 import type { Report, SquatRep } from './types';
+import contract from '../../shared/contract.json';
+const policy = contract.policy;
 
 export type LocalSummary = {
+  schema_version?: string;
   session_id: string;
   input_version: number;
   exercise: Exercise;
@@ -42,6 +45,16 @@ export function reportFor(sessionId: string): Report {
 }
 
 export function analyzeLocal(summary: LocalSummary): Report {
+  if (summary.schema_version !== undefined && summary.schema_version !== contract.schema_version)
+    throw new Error('不支持的数据合同版本。');
+  if (
+    typeof summary.discomfort !== 'boolean' ||
+    (summary.persist !== undefined && typeof summary.persist !== 'boolean') ||
+    (summary.profile.goal !== undefined && !['habit', 'fitness'].includes(summary.profile.goal)) ||
+    (summary.profile.experience !== undefined &&
+      !['beginner', 'regular'].includes(summary.profile.experience))
+  )
+    throw new Error('布尔值或用户目标参数无效。');
   if (
     !isExercise(summary.exercise) ||
     !['simulation', 'camera', 'video'].includes(summary.source) ||
@@ -135,18 +148,22 @@ export function analyzeLocal(summary: LocalSummary): Report {
     unobservable: details.filter((r) => r.rom === 'unobservable').length,
   };
   const blocked = summary.discomfort;
-  const lowEvidence = coverage < 0.6 || summary.active_seconds < 10;
+  const lowEvidence =
+    coverage < policy.minimum_coverage || summary.active_seconds < policy.minimum_seconds;
   let target = summary.target_reps;
-  let rest = 60;
+  let rest = policy.baseline_rest_seconds;
   let reason = '本次记录暂不支持增加训练量，保持计划并继续观察。';
   if (blocked) reason = '用户报告不适：暂停训练，取消继续训练建议。';
   else if (lowEvidence) reason = '有效观察不足：保持计划，先调整机位或补充训练记录。';
-  else if (summary.fatigue >= 7 || completion < 0.7) {
-    target = Math.max(1, Math.round(target * 0.8));
-    rest = 90;
+  else if (summary.fatigue >= policy.high_fatigue || completion < policy.minimum_completion) {
+    target = Math.max(1, Math.round(target * policy.reduction_factor));
+    rest = policy.reduced_rest_seconds;
     reason = '主观疲劳较高或完成度不足，建议减少下一组目标并延长休息。';
-  } else if (summary.form_events > 2 || rom_counts.below_rule > 2) {
-    rest = 75;
+  } else if (
+    summary.form_events > policy.deviation_limit ||
+    rom_counts.below_rule > policy.deviation_limit
+  ) {
+    rest = policy.deviation_rest_seconds;
     reason = '出现多次可观察偏差或未达到实验幅度，保持次数，增加休息并复核动作。';
   }
   const energy = {
@@ -171,6 +188,8 @@ export function analyzeLocal(summary: LocalSummary): Report {
   };
   const now = new Date().toISOString();
   const report: Report = {
+    schema_version: contract.schema_version,
+    policy_version: contract.policy_version,
     session_id: summary.session_id,
     input_version: summary.input_version,
     source: summary.source,
@@ -219,10 +238,11 @@ export function analyzeLocal(summary: LocalSummary): Report {
       },
     ],
   };
+  // Commit memory only after requested persistence succeeds; the same version can retry on failure.
+  if (summary.persist) saveHistory(report);
   lastReport = structuredClone(report);
   reports.set(summary.session_id, structuredClone(report));
   if (reports.size > 100) reports.delete(reports.keys().next().value!);
-  if (summary.persist) saveHistory(report);
   return report;
 }
 

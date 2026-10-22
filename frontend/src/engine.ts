@@ -1,5 +1,7 @@
 import { EXERCISES, type Exercise } from './catalog';
 import type { Metrics, Point, SquatRep } from './types';
+import contract from '../../shared/contract.json';
+const poseRules = contract.pose;
 
 export function jointAngle(a: Point, b: Point, c: Point, aspectRatio = 1): number {
   if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) return NaN;
@@ -64,6 +66,10 @@ export class ExerciseEngine {
   private squatReps: SquatRep[] = [];
   private lastSampleTime: number | null = null;
   private unknownReason = '';
+  private qualityCode = 'observed';
+  private jackPoseSince: number | null = null;
+  private jackPose = '';
+  private jackStart = 0;
   private dt = 0;
   private hipSmooth = 0.55;
   private hipMin = 0.55;
@@ -76,15 +82,40 @@ export class ExerciseEngine {
     private downThreshold = 105,
   ) {}
 
+  /** Drop an unfinished cycle at pause/seek/source boundaries, preserving completed reps. */
+  interrupt() {
+    this.candidate = null;
+    this.armed = false;
+    this.state = 'ready';
+    this.smoothed = 180;
+    this.holdMs = 0;
+    this.jackPoseSince = null;
+    this.jackPose = '';
+    this.lastSampleTime = null;
+    this.lostSince = null;
+    this.prevAng = NaN;
+    this.travel = 0;
+  }
+
   update(points: Point[], time: number, aspectRatio = 1): Metrics {
     this.unknownReason = '';
+    this.qualityCode = 'observed';
+    if (
+      !Number.isFinite(time) ||
+      time < 0 ||
+      (this.lastSampleTime !== null && time <= this.lastSampleTime)
+    ) {
+      const previousTime = this.lastSampleTime;
+      this.interrupt();
+      this.lastSampleTime = previousTime;
+      this.qualityCode = 'invalid_timestamp';
+      this.unknownReason = '采样时间无效或未递增';
+      return this.result(false, '等待连续有效采样；本次不评价动作。');
+    }
     this.dt = this.lastSampleTime == null ? 0 : Math.max(0, time - this.lastSampleTime);
-    if (this.lastSampleTime !== null && time - this.lastSampleTime > 500) {
-      this.candidate = null;
-      this.armed = false;
-      this.state = 'ready';
-      this.smoothed = 180;
-      this.holdMs = 0;
+    if (this.lastSampleTime !== null && time - this.lastSampleTime > poseRules.maximum_gap_ms) {
+      this.interrupt();
+      this.dt = 0;
     }
     this.lastSampleTime = time;
     const family = EXERCISES[this.exercise].family;
@@ -95,24 +126,47 @@ export class ExerciseEngine {
       needed.every(
         (i) =>
           points[i] &&
-          (points[i].visibility ?? 0) >= 0.65 &&
+          Number.isFinite(points[i].visibility) &&
+          (points[i].visibility ?? 0) >= poseRules.minimum_visibility &&
           points[i].x >= 0 &&
           points[i].x <= 1 &&
           points[i].y >= 0 &&
           points[i].y <= 1,
       );
     if (!quality) {
+      this.qualityCode =
+        !Number.isFinite(aspectRatio) || aspectRatio <= 0
+          ? 'invalid_aspect'
+          : needed.some((i) => !points[i])
+            ? 'missing_landmark'
+            : needed.some(
+                  (i) =>
+                    !Number.isFinite(points[i].visibility) ||
+                    (points[i].visibility ?? 0) < poseRules.minimum_visibility,
+                )
+              ? 'low_visibility'
+              : 'out_of_frame';
       this.unknownReason =
         !Number.isFinite(aspectRatio) || aspectRatio <= 0
           ? '画面比例无效'
           : needed.some((i) => !points[i])
             ? '缺少所需关键点'
-            : needed.some((i) => (points[i].visibility ?? 0) < 0.65)
+            : needed.some(
+                  (i) =>
+                    !Number.isFinite(points[i].visibility) ||
+                    (points[i].visibility ?? 0) < poseRules.minimum_visibility,
+                )
               ? '关键点可见性不足'
               : '所需关键点出画或坐标无效';
       if (this.candidate) this.candidate.obscured = true;
+      if (family === 'open_close') {
+        this.armed = false;
+        this.state = 'ready';
+        this.jackPoseSince = null;
+        this.jackPose = '';
+      }
       if (this.lostSince === null) this.lostSince = time;
-      if (time - this.lostSince > 500) {
+      if (time - this.lostSince > poseRules.maximum_gap_ms) {
         this.state = 'ready';
         this.smoothed = 180;
         this.armed = false;
@@ -120,6 +174,11 @@ export class ExerciseEngine {
         this.holdMs = 0;
       }
       return this.result(false, '关键点不可见，请调整机位；暂停动作评价。');
+    }
+    if (this.lostSince !== null && time - this.lostSince > poseRules.maximum_gap_ms) {
+      this.interrupt();
+      this.dt = 0;
+      this.lastSampleTime = time;
     }
     this.lostSince = null;
     if (family === 'knee' || family === 'knee_jump')
@@ -234,8 +293,13 @@ export class ExerciseEngine {
   private updateSquat(points: Point[], time: number, aspectRatio: number): Metrics {
     let hint: string = EXERCISES[this.exercise].hint;
     const raw = jointAngle(points[23], points[25], points[27], aspectRatio);
-    if (!Number.isFinite(raw)) return this.result(false, '无法估计关节角度，请调整机位。');
-    this.smoothed = this.smoothed * 0.6 + raw * 0.4;
+    if (!Number.isFinite(raw)) {
+      this.interrupt();
+      this.qualityCode = 'degenerate_geometry';
+      return this.result(false, '无法估计关节角度，请调整机位。');
+    }
+    const retention = this.dt > 0 ? Math.pow(0.6, this.dt / 50) : 0;
+    this.smoothed = this.smoothed * retention + raw * (1 - retention);
     const countThreshold = Math.min(145, this.downThreshold + 25);
     if (this.armed && this.smoothed < 150 && !this.candidate) {
       this.candidate = {
@@ -299,7 +363,13 @@ export class ExerciseEngine {
   }
 
   private updateJumpingJack(points: Point[], time: number, aspectRatio: number): Metrics {
-    const hipW = Math.max(Math.abs(points[23].x - points[24].x) * aspectRatio, 0.05);
+    const hipW = Math.abs(points[23].x - points[24].x) * aspectRatio;
+    if (hipW < poseRules.jack_min_hip_width) {
+      this.interrupt();
+      this.qualityCode = 'view_unreliable';
+      this.unknownReason = '髋部投影过窄，可能侧身或距离过远';
+      return this.result(false, '请正面朝向摄像头并让全身入画，再从并拢姿态开始。');
+    }
     const footW = Math.abs(points[27].x - points[28].x) * aspectRatio;
     const spread = footW / hipW;
     const handsHigh = points[15].y < points[11].y - 0.04 && points[16].y < points[12].y - 0.04;
@@ -307,18 +377,31 @@ export class ExerciseEngine {
     const feetOpen = spread > 1.65;
     const feetClosed = spread < 1.28;
     this.smoothed = spread * 50;
+    const pose = handsLow && feetClosed ? 'closed' : handsHigh && feetOpen ? 'open' : 'transition';
+    if (pose !== this.jackPose) {
+      this.jackPose = pose;
+      this.jackPoseSince = time;
+    }
+    const stable =
+      this.jackPoseSince !== null && time - this.jackPoseSince >= poseRules.jack_dwell_ms;
     if (handsLow && feetClosed) {
-      this.armed = true;
-      if (this.state === 'open' && time - this.lastRep > 450) {
+      if (!stable) return this.result(true, '正在确认并拢姿态。');
+      if (
+        this.state === 'open' &&
+        time - this.jackStart >= poseRules.jack_cycle_ms &&
+        time - this.lastRep > poseRules.jack_cycle_ms
+      ) {
         this.reps++;
         this.lastRep = time;
         this.state = 'ready';
         return this.result(true, '完成一次开合。手臂过头、双脚打开后再收回。');
       }
+      if (!this.armed) this.jackStart = time;
+      this.armed = true;
       this.state = 'ready';
       return this.result(true, '双手放体侧、双脚并拢，准备下一次打开。');
     }
-    if (this.armed && handsHigh && feetOpen) {
+    if (this.armed && handsHigh && feetOpen && stable) {
       this.state = 'open';
       return this.result(true, '打开：手臂上举，双脚同时分开。');
     }
@@ -659,6 +742,11 @@ export class ExerciseEngine {
       phase: this.state,
       quality,
       quality_status: quality ? 'observed' : 'unknown',
+      quality_code: quality
+        ? 'observed'
+        : this.qualityCode === 'observed'
+          ? 'degenerate_geometry'
+          : this.qualityCode,
       unknown_reason: quality ? '' : this.unknownReason || '无法可靠计算当前动作几何',
       hint,
       angle: Math.round(this.smoothed),

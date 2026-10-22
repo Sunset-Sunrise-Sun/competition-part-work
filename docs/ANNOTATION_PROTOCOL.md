@@ -1,0 +1,67 @@
+# 两核心动作标注与回放规范（2026-10-22）
+
+主责：刘小凡；标注复核：徐倩茹；采集接线：王靖贻。当前算法 `localfit.pose.2026-10-22`。本文冻结 S03 的第一版规范；真人结果尚未取得。
+
+## 机位、适用范围与未知
+
+| 动作 | 采集要求 | 完整计数周期 | 不可评价情形 |
+|---|---|---|---|
+| 深蹲 | 固定摄像头、全身入画，左侧髋/膝/踝清楚可见的侧面；禁止随动作移动镜头 | 先看到站立，再下降，再恢复站立；中途起录不补首个不完整周期 | 左侧关键点低置信、出画、重合、长缺口；正面视频不能用二维膝角评幅度，人工标为错误机位 |
+| 开合跳 | 正面、头手脚入画、镜头固定 | 并拢→手脚同时打开→并拢；端点持续至少 100 ms，周期至少 450 ms | 任一必要点不可见；髋部横向投影小于 0.025 个画面高度时拒绝，可能侧身/过远；短遮挡也取消未完成周期 |
+
+机位门控仍有限：开合跳仅检测明显窄投影，不能可靠识别所有斜视角；深蹲没有自动正侧面分类，也没有右侧自动切换。**错误机位人工真值必须保留**，若引擎仍输出 observed，计入门控假接受，不能改标签来配合算法。
+
+质量码：observed、invalid_timestamp、invalid_aspect、missing_landmark、low_visibility、out_of_frame、degenerate_geometry、view_unreliable。visibility 阈值 0.65，最大连续采样缺口 500 ms；数值是待真人验证的工程参数，不是生理标准。暂停、继续、重置及换视频取消待完成周期。深蹲短遮挡允许保留可见端点的计数，但本次幅度记 unobservable；超过 500 ms 必须从站立重新建立周期。
+
+深蹲计数和幅度分开：默认实验幅度阈值 105°，计数下降阈值为 min(145°, 幅度阈值+25°)，站立阈值 >155°，周期至少 700 ms。平滑按真实采样间隔调整。within_rule / below_rule 只是二维实验幅度；unobservable 不算动作错误。躯干提示也是待验证规则，不作安全或医学判断。
+
+## 样本、真值与分组
+
+1. 建议 8–12 名自愿成年人；缩减时至少 5 名，每动作每人 2 个正常组，每组 10 次。另采静止、局部遮挡、出画、错误机位、中途起录、暂停恢复、漏帧/低帧率。只在本人舒服的范围完成动作，不要求危险姿势。
+2. 用 P01/P02 等匿名编号，按人划分调参/验证/最终测试，组员复核划分；同一视频的相邻片段不可跨划分。原始视频及可识别信息不入仓库，是否保留影像由参与者选择。
+3. 首标人员在不知道预测次数的情况下数完整周期；第二人复核。保留争议，先裁定再评测，不能根据预测结果改真值。两个复核 ID 必须不同。
+4. count_eligible=true 表示具有可人工计数真值的有效完整组；false 必须写 exclusion_reason。拒绝组照常进入报告，列出预测次数和门控结果。未标注为 null，MAE 不计算。不能为了降低 MAE 剔除算法失败组；只有真值不可确定或不符合预定采集协议时才排除，并单列原因。
+5. quality 标签 observed=该动作在此机位与可见性下可评价；unknown=缺点、遮挡、出画、错误机位或无法确定。静止正常站立可为 observed，但 expected_activity=rest。活动状态 work/rest/unknown 是视觉运动标签，不是代谢强度。
+6. 深蹲可额外标 reference_cycles：结束时间 end_ms、实验幅度 rom、下降/上升阶段秒数。仅标可人工判断的字段，不清楚的幅度用 unobservable，阶段时长留空。回放以结束时刻 ±500 ms 一对一匹配，并报告未匹配周期，避免只展示匹配成功样本。
+
+## 采集和执行
+
+网页训练页选择深蹲或开合跳及摄像头/视频，在尚未开始时展开“算法评测采集”，勾选同意。本页只在内存记录关键点与不含暂停的训练时钟，无影像、无自动上传；结束或暂停后手动下载 JSON。重置、换视频或动作会清空记录；超过 20,000 帧标截断并拒绝完整组评测。采集控件已通过编译，真人浏览器采集链路仍需王靖贻实机验收。
+
+下载内容是 clips 数组。不要把预测次数填成 reference_reps。原文件保存在 `.localrun/recording.json`，另建 `.localrun/labels.json`，复制真实 clip_id：
+
+```json
+[
+  {
+    "clip_id": "替换成录制文件中的ID",
+    "participant_id": "P01",
+    "scenario": "normal_side_view",
+    "reference_reps": 10,
+    "count_eligible": true,
+    "exclusion_reason": "",
+    "annotator_id": "annotator-A",
+    "reviewer_id": "reviewer-B",
+    "quality_intervals": [{"start_ms": 0, "end_ms": 30000, "label": "observed"}],
+    "activity_intervals": [],
+    "reference_cycles": []
+  }
+]
+```
+
+示例中的 10 次和 30 秒是格式演示，必须替换为人工记录；区间为左闭右开，互不重叠，允许留空区间，未标注帧不进入混淆矩阵。时间使用导出 time_ms，不是视频播放器的原始时间；中途暂停后的两个时钟不同。为了方便独立复核，正式视频评估建议一段视频连续播放、不中途暂停；暂停异常另组测试。
+
+在仓库根目录执行（先安装项目依赖）：
+
+```powershell
+.venv/Scripts/python.exe scripts/annotate_replay.py .localrun/recording.json .localrun/labels.json .localrun/labelled.json
+node frontend/scripts/evaluate.mjs replay .localrun/labelled.json .localrun/real_replay.json
+node frontend/scripts/evaluate.mjs synthetic - .localrun/synthetic_replay.json
+```
+
+多个文件可合并 clips 数组，clip_id 必须唯一。严禁混淆 synthetic 和 recorded_landmarks；工具分开分组。算法直接复用网页的 engine/activity，不另写一份 Python 计数器。版本、输入 SHA-256、实现 SHA-256 在输出中；源文件哈希先统一 LF 换行，便于 Windows/Linux 核对；重跑相同代码及数据应给出同样结果。
+
+## 交付指标及限制
+
+每动作报告总组数、参与者数、有效/排除/未标注组数、每组误差、计数 MAE、误差≤1 的比例、正常帧假拒绝率、无效帧假接受率、质量原因分布。静止/遮挡等负例的预测次数逐条保留。深蹲逐次输出幅度混淆矩阵、阶段时间 MAE、样本量与未匹配数；开合跳不输出深蹲幅度指标。没有标注时输出 null，不制造零误差。
+
+回放只测试“关键点→规则”，不能代替“摄像头→姿态模型→用户界面”的端到端准确率。回放分段按相邻关键点采样间隔统计，网页按实时渲染时钟统计，二者不是逐毫秒同一计时器；能耗公式共用，但两种采样统计不可当成真人代谢真值。保留模型失败、错人跟踪和错误机位片段，用真人验证补充。个人校准尚未启用，本轮不把固定阈值称作个性化校准。

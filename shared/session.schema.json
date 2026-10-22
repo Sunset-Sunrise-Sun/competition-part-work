@@ -1,0 +1,301 @@
+{
+  "$defs": {
+    "Profile": {
+      "properties": {
+        "weight_kg": {
+          "default": 65,
+          "maximum": 250,
+          "minimum": 30,
+          "title": "Weight Kg",
+          "type": "number"
+        },
+        "height_cm": {
+          "default": 170,
+          "maximum": 220,
+          "minimum": 120,
+          "title": "Height Cm",
+          "type": "number"
+        },
+        "age_years": {
+          "default": 22,
+          "maximum": 80,
+          "minimum": 14,
+          "title": "Age Years",
+          "type": "number"
+        },
+        "sex": {
+          "default": "unspecified",
+          "enum": [
+            "female",
+            "male",
+            "unspecified"
+          ],
+          "title": "Sex",
+          "type": "string"
+        },
+        "activity": {
+          "default": "light",
+          "enum": [
+            "sedentary",
+            "light",
+            "moderate",
+            "active"
+          ],
+          "title": "Activity",
+          "type": "string"
+        },
+        "muscle_upper": {
+          "default": 0.45,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Muscle Upper",
+          "type": "number"
+        },
+        "muscle_core": {
+          "default": 0.4,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Muscle Core",
+          "type": "number"
+        },
+        "muscle_lower": {
+          "default": 0.45,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Muscle Lower",
+          "type": "number"
+        },
+        "body_model": {
+          "default": "smpl",
+          "enum": [
+            "smpl",
+            "smplx"
+          ],
+          "title": "Body Model",
+          "type": "string"
+        },
+        "experience": {
+          "default": "beginner",
+          "enum": [
+            "beginner",
+            "regular"
+          ],
+          "title": "Experience",
+          "type": "string"
+        },
+        "goal": {
+          "default": "habit",
+          "enum": [
+            "habit",
+            "fitness"
+          ],
+          "title": "Goal",
+          "type": "string"
+        }
+      },
+      "title": "Profile",
+      "type": "object"
+    },
+    "SquatRep": {
+      "properties": {
+        "number": {
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Number",
+          "type": "integer"
+        },
+        "start_seconds": {
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Start Seconds",
+          "type": "number"
+        },
+        "bottom_seconds": {
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Bottom Seconds",
+          "type": "number"
+        },
+        "end_seconds": {
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "descent_seconds": {
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Descent Seconds",
+          "type": "number"
+        },
+        "ascent_seconds": {
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Ascent Seconds",
+          "type": "number"
+        },
+        "min_angle_degrees": {
+          "maximum": 180,
+          "minimum": 0,
+          "title": "Min Angle Degrees",
+          "type": "number"
+        },
+        "rom": {
+          "enum": [
+            "within_rule",
+            "below_rule",
+            "unobservable"
+          ],
+          "title": "Rom",
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "start_seconds",
+        "bottom_seconds",
+        "end_seconds",
+        "descent_seconds",
+        "ascent_seconds",
+        "min_angle_degrees",
+        "rom"
+      ],
+      "title": "SquatRep",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": "localfit.session.v1",
+      "default": "localfit.session.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_-]+$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "input_version": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Input Version",
+      "type": "integer"
+    },
+    "exercise": {
+      "maxLength": 40,
+      "minLength": 2,
+      "title": "Exercise",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "simulation",
+        "camera",
+        "video"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "reps": {
+      "maximum": 10000,
+      "minimum": 0,
+      "title": "Reps",
+      "type": "integer"
+    },
+    "active_seconds": {
+      "maximum": 86400,
+      "minimum": 0,
+      "title": "Active Seconds",
+      "type": "number"
+    },
+    "observable_seconds": {
+      "maximum": 86400,
+      "minimum": 0,
+      "title": "Observable Seconds",
+      "type": "number"
+    },
+    "work_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Work Seconds"
+    },
+    "rest_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rest Seconds"
+    },
+    "form_events": {
+      "maximum": 10000,
+      "minimum": 0,
+      "title": "Form Events",
+      "type": "integer"
+    },
+    "fatigue": {
+      "default": 4,
+      "maximum": 10,
+      "minimum": 0,
+      "title": "Fatigue",
+      "type": "integer"
+    },
+    "discomfort": {
+      "default": false,
+      "title": "Discomfort",
+      "type": "boolean"
+    },
+    "target_reps": {
+      "default": 12,
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Target Reps",
+      "type": "integer"
+    },
+    "persist": {
+      "default": false,
+      "title": "Persist",
+      "type": "boolean"
+    },
+    "profile": {
+      "$ref": "#/$defs/Profile"
+    },
+    "rep_details": {
+      "items": {
+        "$ref": "#/$defs/SquatRep"
+      },
+      "maxItems": 100,
+      "title": "Rep Details",
+      "type": "array"
+    }
+  },
+  "required": [
+    "session_id",
+    "exercise",
+    "source",
+    "reps",
+    "active_seconds",
+    "observable_seconds",
+    "form_events"
+  ],
+  "title": "SessionSummary",
+  "type": "object"
+}
