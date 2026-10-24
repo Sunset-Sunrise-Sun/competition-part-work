@@ -1,6 +1,6 @@
-# Phase 1A — 可恢复、可测试的自动化调度器骨架
+# Autopilot — Phase 1A scheduler + Phase 1B runtime prototype
 
-> 状态：**本地骨架 + mock 闭环测试；未部署、未接入真实执行器；已作为 Draft PR 提交供审查。**
+> 状态：**调度器仍以 mock 闭环验证；另新增 opt-in DSH worktree executor / diff reviewer 原型。尚未在用户 Windows 环境实跑，也未接入 GitHub 任务源、推送/PR 发布或常驻服务。**
 > 基线：`wjy/three-day-delivery` @ `c788a1ad0237055c74c42b4f80d04e1860787be8`
 > 工作区：`D:/原子赛道/workspaces/autopilot-mvp`（隔离 worktree）
 > 分支：`feat/autopilot-scheduler-mvp`
@@ -15,7 +15,7 @@
 - 长执行/审查期间的后台 lease heartbeat，以及 lease generation + claim token fencing；
 - `TaskSource` / `Executor` / `Reviewer` 接口 + fake/mock 实现；
 - 审查结果绑定精确 `head_sha`，新提交使旧审查失效；
-- 真实 GitHub/DSH adapter 仅占位并 **默认关闭**，未配置时 fail-closed；
+- 旧版 GitHub/DSH adapter 仍为占位；新增的 DSH runtime adapter **默认关闭**，显式启用后才会调用本机 CLI；
 - 两个 dummy 任务自动连续推进，其中一个发生返工并重新审查。
 
 **不包含**：真实 GitHub 写入、真实 DSH headless 执行、真实模型调用、Webhook 入站、ChatGPT 自动 Review、常驻 Windows 服务、合并/main/upstream push。
@@ -117,7 +117,7 @@ Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
 
 ## 7. 启动 / 停止
 
-本阶段**没有常驻服务**；不要把它当作已上线无人值守系统。
+当前仍**没有常驻服务，也没有 GitHub 任务领取/发布闭环**；不要把它当作已上线无人值守系统。
 
 ```powershell
 cd D:\原子赛道\workspaces\autopilot-mvp
@@ -162,13 +162,13 @@ python -m unittest discover -s autopilot/tests -t . -v
 
 ## 10. 已知限制（Phase 1A）
 
-1. 真实 GitHub/DSH adapter 均未实现，仅 fail-closed 占位；不能领取真实任务、不能推送、不能创建 PR。
+1. GitHub task source / push / PR publication adapter 尚未实现；旧版 `DshHeadlessAdapter` 仍是占位，但 `DshWorktreeExecutor` 与 `DshDiffReviewer` 已有可测试实现；不能领取真实任务、不能推送、不能创建 PR。
 2. 没有常驻进程、Windows Task Scheduler、webhook、autonomous review 后端；本阶段只有 mock 闭环。
-3. 审查器是脚本化 fake；不能证明 ChatGPT/API Review 可用。
+3. 自动审查当前使用独立 DSH headless 调用，不等同于 ChatGPT API，也不代表模型判断可靠；需人工抽查审查质量。
 4. 执行超时依赖执行器/adapter 返回或抛出；本骨架不做跨进程强制终止。
 5. 单机 SQLite；跨机器并发不在范围内。
 6. 不包含 main 合并、auto-merge、总仓库推送路径；未来也必须保留王靖贻的人工授权门禁。
 
 ## 11. 证据边界
 
-本目录的测试是 **mock 驱动的本地闭环**，不是真实 DeepSeek/GitHub 无人值守系统上线。真实 headless 凭证、真实 GitHub 写权限、Review 后端、常驻 runner 均未接入；它们是 Phase 1B 的前置条件。
+本目录的测试包括 mock 调度闭环与对 DSH 子进程/隔离 worktree 的模拟集成测试；**它们不等于在用户机器上成功调用真实 DeepSeek 模型**。真实 headless 凭证、GitHub 任务源/写权限、远程分支与 PR 发布、常驻 runner 均尚未接入或验收。
