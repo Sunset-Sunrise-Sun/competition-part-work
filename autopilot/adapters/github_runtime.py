@@ -356,6 +356,8 @@ class GitHubIssueAdapter(TaskSource):
 
     def _validate_pr_head(self, pr: dict[str, Any], branch: str, head_sha: str) -> str:
         self._validate_pr_identity(pr, branch)
+        if pr.get("draft") is not True:
+            raise GitHubRuntimeError("matching pull request is no longer a Draft; owner review required")
         head = pr["head"]
         if str(head.get("sha", "")).lower() != head_sha.lower():
             raise GitHubRuntimeError("published pull request head does not match the reviewed SHA")
