@@ -178,11 +178,13 @@ def _agent_env(config_path: Path) -> dict[str, str]:
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     # Override local repository config too: worktrees share .git/config, which
     # may contain credential helpers or HTTP extra headers from the user's setup.
-    env["GIT_CONFIG_COUNT"] = "2"
+    env["GIT_CONFIG_COUNT"] = "3"
     env["GIT_CONFIG_KEY_0"] = "credential.helper"
     env["GIT_CONFIG_VALUE_0"] = ""
     env["GIT_CONFIG_KEY_1"] = "http.extraheader"
     env["GIT_CONFIG_VALUE_1"] = ""
+    env["GIT_CONFIG_KEY_2"] = "http.https://github.com/.extraheader"
+    env["GIT_CONFIG_VALUE_2"] = ""
     env["GIT_TERMINAL_PROMPT"] = "0"
     return env
 
