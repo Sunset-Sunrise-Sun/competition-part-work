@@ -228,6 +228,25 @@ class GitHubIssueQueueTest(unittest.TestCase):
         self.assertIn("https://github.com/acme/repo/pull/19", args[2])
         self.assertIn("Reviewed the exact head.", args[2])
 
+    def test_branch_publisher_rejects_non_autopilot_refs_and_never_force_pushes(self) -> None:
+        adapter = make_adapter(self.root)
+        with patch("autopilot.adapters.github_runtime._git") as git_mock:
+            with self.assertRaisesRegex(GitHubRuntimeError, "outside autopilot"):
+                adapter._push_branch("main")
+            git_mock.assert_not_called()
+
+            adapter._push_branch("autopilot/gh-issue-7")
+
+        calls = git_mock.call_args_list
+        self.assertEqual(calls[0].args[1], "check-ref-format")
+        push_call = calls[1]
+        self.assertEqual(push_call.args[1], "push")
+        self.assertNotIn("--force", push_call.args)
+        self.assertIn(
+            "refs/heads/autopilot/gh-issue-7:refs/heads/autopilot/gh-issue-7",
+            push_call.args,
+        )
+
     def test_publisher_refuses_to_reuse_pr_promoted_out_of_draft(self) -> None:
         adapter = make_adapter(self.root)
         promoted = pr_payload("https://github.com/acme/repo/pull/19")
