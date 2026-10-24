@@ -170,7 +170,7 @@ Token 至少需要目标仓库的 Contents（读写）、Issues（读写）、Pu
 [Environment]::SetEnvironmentVariable("AUTOPILOT_GITHUB_REPOSITORY", "OWNER/REPOSITORY", "User")
 [Environment]::SetEnvironmentVariable("AUTOPILOT_GITHUB_BASE_BRANCH", "YOUR_WORKING_BRANCH", "User")
 # 若 dsh 不在用户 PATH 中，再显式设置：
-# [Environment]::SetEnvironmentVariable("AUTOPILOT_DSH_CLI", "C:\\path\\to\\dsh.exe", "User")
+# [Environment]::SetEnvironmentVariable("AUTOPILOT_DSH_CLI", "C:\path\to\dsh.exe", "User")
 ```
 
 保存后，重新打开 PowerShell 窗口，再安装任务：
