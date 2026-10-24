@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections import deque
 from pathlib import Path
@@ -59,24 +60,43 @@ def _safe_branch(task_id: str) -> str:
 
 def _git(repo_root: Path, *args: str, token: str | None = None, timeout: float = 60.0) -> str:
     env = dict(os.environ)
+    for key in list(env):
+        upper = key.upper()
+        if upper in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}:
+            env.pop(key, None)
+        elif upper.startswith("GIT_CONFIG_KEY_") or upper.startswith("GIT_CONFIG_VALUE_"):
+            env.pop(key, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
-    if token:
-        basic = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
-        env["GIT_CONFIG_COUNT"] = "1"
-        env["GIT_CONFIG_KEY_0"] = "http.https://github.com/.extraheader"
-        env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: basic {basic}"
-    result = subprocess.run(
-        ["git", "-C", str(repo_root), *args],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        check=False,
-        env=env,
-    )
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    with tempfile.TemporaryDirectory(prefix="autopilot-git-config-") as directory:
+        empty_config = Path(directory) / "empty.gitconfig"
+        empty_config.write_text("", encoding="utf-8")
+        env["GIT_CONFIG_GLOBAL"] = str(empty_config)
+        env["GIT_CONFIG_SYSTEM"] = str(empty_config)
+        entries = [
+            ("credential.helper", ""),
+            ("http.extraheader", ""),
+            ("http.https://github.com/.extraheader", ""),
+        ]
+        if token:
+            basic = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+            entries.append(("http.https://github.com/.extraheader", f"AUTHORIZATION: basic {basic}"))
+        env["GIT_CONFIG_COUNT"] = str(len(entries))
+        for index, (key, value) in enumerate(entries):
+            env[f"GIT_CONFIG_KEY_{index}"] = key
+            env[f"GIT_CONFIG_VALUE_{index}"] = value
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+            env=env,
+        )
     if result.returncode:
         message = redact(result.stderr.strip())[-2000:]
         raise GitHubRuntimeError(f"git operation failed ({result.returncode}): {message}")
