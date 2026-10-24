@@ -32,7 +32,8 @@ autopilot/
   redaction.py        # 日志脱敏辅助（未来 adapter 使用）
   cli.py              # status / recover 只读/恢复命令
   adapters/
-    dsh.py            # DSH headless 占位 adapter（fail-closed）
+    dsh.py            # Phase 1A DSH 占位 adapter（保留）
+    dsh_runtime.py    # opt-in DSH worktree executor + diff reviewer
     github.py         # GitHub REST 占位 adapter（无 merge 方法）
   tests/              # unittest 测试
   README.md
@@ -129,7 +130,7 @@ python -m autopilot.cli --db data/autopilot.sqlite3 status
 python -m autopilot.cli --db data/autopilot.sqlite3 recover
 ```
 
-调度循环本身是库 API（`Scheduler.run_once()` / `run_until_idle()`）；未来 Phase 1B 才会增加常驻 runner、Windows Task Scheduler/服务停止/重启和真实 adapter 接线。本阶段“启动/停止”仅指运行测试或单次库调用。
+调度循环本身仍是库 API（`Scheduler.run_once()` / `run_until_idle()`）；Phase 1B 目前只接入可测试的本地 DSH 执行/审查原型，尚未增加常驻 runner、Windows Task Scheduler、GitHub 任务源或远程发布。本阶段“启动/停止”仍仅指运行测试或单次库调用。
 
 ## 8. 测试
 
@@ -150,7 +151,7 @@ python -m unittest discover -s autopilot/tests -t . -v
 - 三轮返工上限 → `needs-owner`；
 - 执行超时、执行异常、审查超时、空 head、非法状态转换 → 安全暂停；
 - 专用 CI job 会执行 `python -m unittest discover -s autopilot/tests -t . -v` 与 `python -m compileall -q autopilot`。
-- adapter 默认关闭/凭证缺失 fail-closed；启用后仍为占位、不发真实请求；无 merge/main/upstream push 路径；
+- 旧占位 adapter 默认关闭；新 DSH runtime 只有显式启用才会启动真实进程。测试通过 fake DSH 子进程验证工作树隔离、超时/租约丢失终止、敏感路径拦截和审查 JSON 校验；无 GitHub push/merge/main/upstream push 路径；
 - 日志脱敏辅助函数。
 
 ## 9. 日志与秘密
@@ -162,13 +163,13 @@ python -m unittest discover -s autopilot/tests -t . -v
 
 ## 10. 已知限制（Phase 1A）
 
-1. GitHub task source / push / PR publication adapter 尚未实现；旧版 `DshHeadlessAdapter` 仍是占位，但 `DshWorktreeExecutor` 与 `DshDiffReviewer` 已有可测试实现；不能领取真实任务、不能推送、不能创建 PR。
-2. 没有常驻进程、Windows Task Scheduler、webhook、autonomous review 后端；本阶段只有 mock 闭环。
-3. 自动审查当前使用独立 DSH headless 调用，不等同于 ChatGPT API，也不代表模型判断可靠；需人工抽查审查质量。
-4. 执行超时依赖执行器/adapter 返回或抛出；本骨架不做跨进程强制终止。
+1. GitHub task source / push / PR publication adapter 尚未实现；当前不能领取 GitHub 任务、不能推送、不能创建 PR。
+2. 没有常驻进程、Windows Task Scheduler 或 webhook；自动化循环仍未部署。
+3. 自动审查使用单独的 DSH headless 调用，不等同于 ChatGPT API，也不代表模型判断可靠；需人工抽查审查质量。
+4. DSH 子进程支持超时/租约丢失时终止进程树；真实 Windows 进程树终止与本机 DSH 凭证链仍需现场验收。
 5. 单机 SQLite；跨机器并发不在范围内。
 6. 不包含 main 合并、auto-merge、总仓库推送路径；未来也必须保留王靖贻的人工授权门禁。
 
 ## 11. 证据边界
 
-本目录的测试包括 mock 调度闭环与对 DSH 子进程/隔离 worktree 的模拟集成测试；**它们不等于在用户机器上成功调用真实 DeepSeek 模型**。真实 headless 凭证、GitHub 任务源/写权限、远程分支与 PR 发布、常驻 runner 均尚未接入或验收。
+本目录的测试包括 mock 调度闭环与对 DSH 子进程/隔离 worktree 的模拟集成测试；**它们不等于在用户机器上成功调用真实 DeepSeek 模型**。真实 DSH 运行、GitHub 任务源/写权限、远程分支与 PR 发布、常驻 runner 均尚未接入或验收。
