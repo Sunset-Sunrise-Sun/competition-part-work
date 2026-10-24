@@ -413,6 +413,10 @@ class Scheduler:
                 status=paused.status,
                 error="missing head SHA",
             )
+        if cancel_event is not None and cancel_event.is_set():
+            return self._stale_result(
+                task.task_id, "review", LeaseLost("lease heartbeat lost before review")
+            )
         try:
             review_cancellable = getattr(self.reviewer, "review_cancellable", None)
             if cancel_event is not None and callable(review_cancellable):
@@ -457,6 +461,10 @@ class Scheduler:
                 error="stale or malformed review",
             )
 
+        if cancel_event is not None and cancel_event.is_set():
+            return self._stale_result(
+                task.task_id, "review", LeaseLost("lease heartbeat lost before review commit")
+            )
         event_key = f"review:{task.task_id}:{head_sha}:{review.reviewer}"
         try:
             outcome = self.store.submit_review(
