@@ -161,7 +161,21 @@ python -m autopilot.daemon --repo-root . --db data/autopilot.sqlite3 --once
 
 Token 至少需要目标仓库的 Contents（读写）、Issues（读写）、Pull requests（读写）与 Metadata（读取）权限。建议用只授权单个仓库的 fine-grained token；不要使用组织/个人全权限凭证。
 
-只有一次运行成功、确认 Draft PR 和 Issue 标签/评论均符合预期后，再安装登录触发的 Windows 任务：
+只有一次运行成功、确认 Draft PR 和 Issue 标签/评论均符合预期后，再安装登录触发的 Windows 任务。安装脚本读取的是 **Windows 用户级环境变量**，不是仅存在于当前 PowerShell 窗口的 `$env:` 值；请先把运行开关和目标配置保存到当前用户环境（不需要保存 Token）：
+
+```powershell
+[Environment]::SetEnvironmentVariable("AUTOPILOT_GITHUB_ENABLED", "1", "User")
+[Environment]::SetEnvironmentVariable("AUTOPILOT_DSH_ENABLED", "1", "User")
+[Environment]::SetEnvironmentVariable("AUTOPILOT_REVIEW_ENABLED", "1", "User")
+[Environment]::SetEnvironmentVariable("AUTOPILOT_GITHUB_REPOSITORY", "OWNER/REPOSITORY", "User")
+[Environment]::SetEnvironmentVariable("AUTOPILOT_GITHUB_BASE_BRANCH", "YOUR_WORKING_BRANCH", "User")
+# 若 dsh 不在用户 PATH 中，再显式设置：
+# [Environment]::SetEnvironmentVariable("AUTOPILOT_DSH_CLI", "C:\\path\\to\\dsh.exe", "User")
+```
+
+保存后，重新打开 PowerShell 窗口，再安装任务：
+
+
 
 ```powershell
 .\scripts\install_autopilot_task.ps1 -RepoRoot (Get-Location).Path
