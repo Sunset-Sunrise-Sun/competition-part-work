@@ -89,26 +89,37 @@ def _branch_name(task_id: str) -> str:
     return f"autopilot/{slug}"
 
 
-def _is_sensitive_path(path: str) -> bool:
-    normalized = path.replace("\\", "/").lstrip("./")
+def _normalize_repo_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _is_secret_path(path: str) -> bool:
+    normalized = _normalize_repo_path(path)
     lower = normalized.lower()
     name = lower.rsplit("/", 1)[-1]
-    if name in {".env", ".env.local", ".env.production", ".env.development"}:
-        return True
-    if name.startswith(".env.") and name not in _ALLOWED_ENV_EXAMPLES:
+    if name == ".env" or (name.startswith(".env.") and name not in _ALLOWED_ENV_EXAMPLES):
         return True
     if any(part in {"secrets", "credentials"} for part in lower.split("/")):
-        return True
-    if lower.startswith(".github/workflows/"):
-        return True
-    if lower.startswith(".localrun/") or lower.startswith("data/"):
         return True
     return Path(name).suffix.lower() in _SECRET_SUFFIXES
 
 
+def _is_sensitive_path(path: str) -> bool:
+    lower = _normalize_repo_path(path).lower()
+    return (
+        _is_secret_path(path)
+        or lower.startswith(".github/workflows/")
+        or lower.startswith(".localrun/")
+        or lower.startswith("data/")
+    )
+
+
 def _tracked_sensitive_paths(repo: Path, base_sha: str) -> list[str]:
     paths = _run_git(repo, "ls-tree", "-r", "--name-only", base_sha).splitlines()
-    return [path for path in paths if _is_sensitive_path(path)]
+    return [path for path in paths if _is_secret_path(path)]
 
 
 def _dsh_command(cli_path: str | None, args: Sequence[str]) -> list[str]:
