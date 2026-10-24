@@ -95,11 +95,13 @@ Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
 - `FakeReviewer`：按 `(task_id, head_sha)` 返回结构化 verdict；旧 head 的审查无法通过。
 - `FakeClock`：测试中无真实等待。
 
-真实 adapter（本轮**未执行**）：
+Runtime adapter 状态：
 
-- `DshHeadlessAdapter.from_env()`：需要 `AUTOPILOT_DSH_ENABLED=1` + `DEEPSEEK_API_KEY` + `AUTOPILOT_DSH_CLI`；即使满足，`execute()` 也只抛 `AdapterNotImplementedError`。
-- `GitHubRestAdapter.from_env()`：需要 `AUTOPILOT_GITHUB_ENABLED=1` + `GITHUB_TOKEN`；即使满足，所有方法也只抛 `AdapterNotImplementedError`；**没有 merge 方法**。
-- 默认未设置环境变量时均抛 `AdapterDisabledError`；有开关但无凭证时抛 `AdapterCredentialMissing`。
+- `DshHeadlessAdapter`：Phase 1A 占位类仍保留，不执行真实命令。
+- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每个任务使用独立 Git worktree，校验 base/head SHA，屏蔽 GitHub/SSH 发布凭证，拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。
+- `DshDiffReviewer`：独立启动一次 headless 调用，只把脱敏后的精确 base..head patch 传给审查器，要求返回绑定 head SHA 的结构化 JSON；默认由 `AUTOPILOT_REVIEW_ENABLED=1` 显式启用。
+- `GitHubRestAdapter`：仍是 fail-closed 占位类；本阶段不轮询 GitHub Issues、不推送分支、不创建 PR，也不发正式 GitHub Review。
+- DSH 子进程超时或 lease 丢失时会终止进程树；CI 测试验证模拟执行路径，但真实 Windows/DSH 运行仍未验收。
 
 ## 6. 配置
 
