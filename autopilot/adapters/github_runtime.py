@@ -20,6 +20,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from ..interfaces import TaskSource
 from ..models import ExecutionResult, ReviewResult, ReviewVerdict, TaskRecord, TaskSpec, TaskStatus
 from ..redaction import redact
 
