@@ -15,7 +15,12 @@ Status: implementation draft. This adds a local Windows runner; it is not consid
 
 ## One-time setup
 
-Use a clean isolated worktree of this repository, on the Phase 1B branch. Do not run setup from D:/localfit-fe-02 or from a dirty product worktree.
+Use a clean isolated worktree of this repository, on the Phase 1B branch. Do not run setup from D:/localfit-fe-02 or from a dirty product worktree. If the runner worktree has not been created yet, run the following from the existing clean clone at D:/原子赛道/workspaces/three-day-delivery/upstream:
+
+    git -C D:/原子赛道/workspaces/three-day-delivery/upstream fetch origin feat/autopilot-phase1b-local-runner
+    git -C D:/原子赛道/workspaces/three-day-delivery/upstream worktree add --track -b feat/autopilot-phase1b-local-runner D:/原子赛道/workspaces/autopilot-runner origin/feat/autopilot-phase1b-local-runner
+
+Then open a new PowerShell in D:/原子赛道/workspaces/autopilot-runner and run:
 
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-autopilot.ps1
 

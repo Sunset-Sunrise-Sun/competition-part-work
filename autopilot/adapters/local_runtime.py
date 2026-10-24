@@ -223,7 +223,7 @@ class GitHubCli:
     def list_open_prs_for_branch(self, branch: str) -> list[dict[str, Any]]:
         value = self.json([
             "pr", "list", "--repo", self.repository, "--state", "open",
-            "--head", branch, "--json", "number,url,title,isDraft",
+            "--head", branch, "--json", "number,url,title,isDraft,baseRefName,headRefName",
         ])
         return [item for item in value if isinstance(item, dict)]
 
@@ -236,6 +236,10 @@ class GitHubCli:
         existing = self.list_open_prs_for_branch(branch)
         if existing:
             pr = existing[0]
+            if pr.get("baseRefName") != base_branch or pr.get("headRefName") != branch:
+                raise ExternalCommandError("existing PR base/head does not match the guarded task branch")
+            if pr.get("isDraft") is not True:
+                raise ExternalCommandError("existing task PR is no longer Draft; owner inspection is required")
         else:
             body = (
                 "## Autopilot task result (Draft; never auto-merged)\n\n"
@@ -465,6 +469,12 @@ class DshGitExecutor:
             raise ExternalCommandError(
                 f"task workspace is not clean after branch preparation: {final_status[:600]}"
             )
+        base_ancestor = subprocess.run(
+            ["git", "-C", str(workspace), "merge-base", "--is-ancestor", task.base_sha, "HEAD"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if base_ancestor.returncode != 0:
+            raise ExternalCommandError("task branch does not descend from the exact recorded base SHA")
         self.github.set_issue_labels(
             number, add=["agent:working"],
             remove=["agent:ready", "agent:review", "agent:changes-requested"],
@@ -494,6 +504,7 @@ class DshGitExecutor:
             f"Branch: {self.branch_for(task)}\nHead before this attempt: {head}\n\n"
             f"Issue requirements:\n{body[:18000]}\n\n"
             f"Latest independent review feedback:\n{feedback[:10000]}\n\n"
+            f"Previous orchestrator error, if any: {task.last_error or 'None'}\n\n"
             "Implement the smallest correct change. Finish with a concise summary of changed files, commands/results, "
             "and unresolved risks. Do not output secrets."
         )
@@ -571,7 +582,11 @@ class DshGitExecutor:
         self, task: TaskRecord, attempt: int, workspace: Path, timeout_seconds: float,
         cancel_event: threading.Event | None,
     ) -> ExecutionResult:
+        if cancel_event is not None and cancel_event.is_set():
+            raise LeaseLost("lease was already lost before task setup")
         task_workspace, branch = self._prepare_task_clone(task)
+        if cancel_event is not None and cancel_event.is_set():
+            raise LeaseLost("lease was lost while preparing the task workspace")
         head_before = self._git(task_workspace, "rev-parse", "HEAD")
         prompt = self._build_prompt(task, task_workspace)
         result = run_process(
@@ -622,7 +637,18 @@ class DshGitExecutor:
             raise LeaseLost("lease lost after local commit; refusing to push stale worker output")
         remote_exists = self._remote_sha(task_workspace, branch) is not None
         push_args = ["push", "origin", branch] if remote_exists else ["push", "--set-upstream", "origin", branch]
-        self._git(task_workspace, *push_args, timeout=180)
+        push_result = run_process(
+            "git", ["-C", str(task_workspace), *push_args],
+            cwd=task_workspace, timeout_seconds=180, cancel_event=cancel_event,
+        )
+        if push_result.returncode != 0:
+            raise ExternalCommandError(
+                f"task-branch publication failed: {redact((push_result.stderr or push_result.stdout or '').strip())[-1200:]}"
+            )
+        if cancel_event is not None and cancel_event.is_set():
+            raise LeaseLost("lease lost during branch publication; no PR action will be attempted")
+        if self._remote_sha(task_workspace, branch) != head_sha:
+            raise ExternalCommandError("remote task branch SHA does not match the validated local head")
         pr = self.github.ensure_draft_pr(
             branch=branch, base_branch=self.base_branch,
             title=f"LocalFit task #{issue_number}: {task.title}",
@@ -706,6 +732,8 @@ class CodexCliReviewer:
                 f"Codex review failed ({result.returncode}): "
                 f"{redact((result.stderr or result.stdout or '').strip())[-1200:]}"
             )
+        if cancel_event is not None and cancel_event.is_set():
+            raise LeaseLost("lease lost after Codex review; result and comment will be discarded")
         data = parse_json_object(result.stdout or "")
         verdict_map = {
             "approved": ReviewVerdict.APPROVED,
@@ -727,6 +755,8 @@ class CodexCliReviewer:
             verdict=verdict_map[verdict_text], head_sha=head_sha,
             defects=tuple(defects), reviewer="codex-cli", notes=notes,
         )
+        if cancel_event is not None and cancel_event.is_set():
+            raise LeaseLost("lease lost before publishing review comment")
         prs = self.github.list_open_prs_for_branch(branch)
         if not prs:
             raise ExternalCommandError("no open PR exists for the reviewed task branch")

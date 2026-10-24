@@ -139,6 +139,7 @@ def _status_label(github: GitHubCli, task, status: TaskStatus, result) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    halt_file: Path | None = None
     try:
         repo_path, task_root, log_root, db_path, dsh_cli = _require_config(args)
         configure_logging(log_root)
@@ -221,7 +222,8 @@ def main(argv: list[str] | None = None) -> int:
                 if result is not None:
                     task = store.get_task(result.task_id)
                     if task is not None:
-                        _status_label(github, task, result.status, result)
+                        effective_status = TaskStatus.NEEDS_OWNER if result.lease_lost else result.status
+                        _status_label(github, task, effective_status, result)
                     log.info(
                         "task=%s stage=%s status=%s head=%s error=%s",
                         result.task_id, result.stage, result.status.value,
@@ -244,6 +246,15 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("autopilot.runner").warning("Runner interrupted by operator.")
         return 130
     except Exception as error:  # noqa: BLE001 - fail closed, do not loop on an unknown error
+        if halt_file is not None:
+            try:
+                halt_file.parent.mkdir(parents=True, exist_ok=True)
+                halt_file.write_text(
+                    f"halted at {time.strftime('%Y-%m-%dT%H:%M:%S')} unexpected_error={type(error).__name__}\n",
+                    encoding="utf-8",
+                )
+            except Exception:  # noqa: BLE001
+                pass
         logging.getLogger("autopilot.runner").exception("Runner stopped safely: %s", error)
         return 2
 
