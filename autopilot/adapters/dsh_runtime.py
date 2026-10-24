@@ -12,6 +12,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -129,6 +130,8 @@ def _dsh_command(cli_path: str | None, args: Sequence[str]) -> list[str]:
             "DSH CLI not found; set AUTOPILOT_DSH_CLI to the installed dsh launcher"
         )
     path = Path(executable)
+    if path.suffix.lower() == ".py":
+        return [sys.executable, str(path), *args]
     if os.name == "nt" and path.suffix.lower() in {".cmd", ".bat"}:
         comspec = os.environ.get("COMSPEC", "cmd.exe")
         commandline = subprocess.list2cmdline([str(path), *args])
