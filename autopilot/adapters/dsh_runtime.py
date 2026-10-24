@@ -148,6 +148,8 @@ def _agent_env(config_path: Path) -> dict[str, str]:
             env.pop(key, None)
         elif upper.startswith("GITHUB_") or upper.startswith("GH_"):
             env.pop(key, None)
+        elif upper in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}:
+            env.pop(key, None)
         elif upper.startswith("GIT_CONFIG_KEY_") or upper.startswith("GIT_CONFIG_VALUE_"):
             env.pop(key, None)
         elif upper in {"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_SSH", "GIT_SSH_COMMAND"}:
