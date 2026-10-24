@@ -53,6 +53,7 @@ def make_adapter(root: Path) -> GitHubIssueAdapter:
 def pr_payload(url: str, *, head_sha: str = HEAD) -> dict:
     return {
         "html_url": url,
+        "draft": True,
         "head": {
             "ref": "autopilot/gh-issue-7",
             "sha": head_sha,
