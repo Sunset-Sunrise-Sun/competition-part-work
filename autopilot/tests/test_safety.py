@@ -111,10 +111,11 @@ class AdapterSafetyTest(unittest.TestCase):
             "DEEPSEEK_API_KEY=sk-do-not-log\n"
             "GITHUB_TOKEN=ghp_do_not_log\n"
             "Authorization: Bearer abc.def\n"
+            "Authorization: Basic dXNlci10b2tlbjpleGFtcGxl\n"
             "X-Hub-Signature-256: deadbeef"
         )
         masked = redact(text)
-        for secret in ("sk-do-not-log", "ghp_do_not_log", "abc.def", "deadbeef"):
+        for secret in ("sk-do-not-log", "ghp_do_not_log", "abc.def", "dXNlci10b2tlbjpleGFtcGxl", "deadbeef"):
             self.assertNotIn(secret, masked)
         self.assertIn("<redacted>", masked)
 
