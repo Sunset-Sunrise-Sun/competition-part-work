@@ -205,6 +205,8 @@ def _run_headless(
 ) -> str:
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be > 0")
+    if cancel_event is not None and cancel_event.is_set():
+        raise LeaseLost("lease heartbeat lost before DSH process start")
     command = _dsh_command(cli_path, ["--profile", "headless", "--json", "-"])
     env = _agent_env(config_path)
     kwargs: dict[str, object] = {}
