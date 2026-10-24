@@ -1,6 +1,6 @@
-# Phase 1A — 可恢复、可测试的自动化调度器骨架
+# Autopilot — Phase 1A scheduler + Phase 1B runtime prototype
 
-> 状态：**本地骨架 + mock 闭环测试；未部署、未接入真实执行器；已作为 Draft PR 提交供审查。**
+> 状态：**调度器仍以 mock 闭环验证；另新增 opt-in DSH worktree executor / diff reviewer 原型。尚未在用户 Windows 环境实跑，也未接入 GitHub 任务源、推送/PR 发布或常驻服务。**
 > 基线：`wjy/three-day-delivery` @ `c788a1ad0237055c74c42b4f80d04e1860787be8`
 > 工作区：`D:/原子赛道/workspaces/autopilot-mvp`（隔离 worktree）
 > 分支：`feat/autopilot-scheduler-mvp`
@@ -15,10 +15,10 @@
 - 长执行/审查期间的后台 lease heartbeat，以及 lease generation + claim token fencing；
 - `TaskSource` / `Executor` / `Reviewer` 接口 + fake/mock 实现；
 - 审查结果绑定精确 `head_sha`，新提交使旧审查失效；
-- 真实 GitHub/DSH adapter 仅占位并 **默认关闭**，未配置时 fail-closed；
+- 旧版 GitHub/DSH adapter 仍为占位；新增的 DSH runtime adapter **默认关闭**，显式启用后才会调用本机 CLI；
 - 两个 dummy 任务自动连续推进，其中一个发生返工并重新审查。
 
-**不包含**：真实 GitHub 写入、真实 DSH headless 执行、真实模型调用、Webhook 入站、ChatGPT 自动 Review、常驻 Windows 服务、合并/main/upstream push。
+**不包含**：GitHub 任务读取/写入与远程发布、已在用户设备验收的真实 DSH/模型调用、Webhook 入站、ChatGPT API Review、常驻 Windows 服务、合并/main/upstream push。
 
 ## 2. 目录
 
@@ -32,7 +32,8 @@ autopilot/
   redaction.py        # 日志脱敏辅助（未来 adapter 使用）
   cli.py              # status / recover 只读/恢复命令
   adapters/
-    dsh.py            # DSH headless 占位 adapter（fail-closed）
+    dsh.py            # Phase 1A DSH 占位 adapter（保留）
+    dsh_runtime.py    # opt-in DSH worktree executor + diff reviewer
     github.py         # GitHub REST 占位 adapter（无 merge 方法）
   tests/              # unittest 测试
   README.md
@@ -94,11 +95,13 @@ Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
 - `FakeReviewer`：按 `(task_id, head_sha)` 返回结构化 verdict；旧 head 的审查无法通过。
 - `FakeClock`：测试中无真实等待。
 
-真实 adapter（本轮**未执行**）：
+Runtime adapter 状态：
 
-- `DshHeadlessAdapter.from_env()`：需要 `AUTOPILOT_DSH_ENABLED=1` + `DEEPSEEK_API_KEY` + `AUTOPILOT_DSH_CLI`；即使满足，`execute()` 也只抛 `AdapterNotImplementedError`。
-- `GitHubRestAdapter.from_env()`：需要 `AUTOPILOT_GITHUB_ENABLED=1` + `GITHUB_TOKEN`；即使满足，所有方法也只抛 `AdapterNotImplementedError`；**没有 merge 方法**。
-- 默认未设置环境变量时均抛 `AdapterDisabledError`；有开关但无凭证时抛 `AdapterCredentialMissing`。
+- `DshHeadlessAdapter`：Phase 1A 占位类仍保留，不执行真实命令。
+- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每个任务使用独立 Git worktree，校验 base/head SHA，屏蔽 GitHub/SSH 发布凭证，拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。
+- `DshDiffReviewer`：独立启动一次 headless 调用，只把脱敏后的精确 base..head patch 传给审查器，要求返回绑定 head SHA 的结构化 JSON；默认由 `AUTOPILOT_REVIEW_ENABLED=1` 显式启用。
+- `GitHubRestAdapter`：仍是 fail-closed 占位类；本阶段不轮询 GitHub Issues、不推送分支、不创建 PR，也不发正式 GitHub Review。
+- DSH 子进程超时或 lease 丢失时会终止进程树；CI 测试验证模拟执行路径，但真实 Windows/DSH 运行仍未验收。
 
 ## 6. 配置
 
@@ -117,7 +120,7 @@ Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
 
 ## 7. 启动 / 停止
 
-本阶段**没有常驻服务**；不要把它当作已上线无人值守系统。
+当前仍**没有常驻服务，也没有 GitHub 任务领取/发布闭环**；不要把它当作已上线无人值守系统。
 
 ```powershell
 cd D:\原子赛道\workspaces\autopilot-mvp
@@ -129,7 +132,7 @@ python -m autopilot.cli --db data/autopilot.sqlite3 status
 python -m autopilot.cli --db data/autopilot.sqlite3 recover
 ```
 
-调度循环本身是库 API（`Scheduler.run_once()` / `run_until_idle()`）；未来 Phase 1B 才会增加常驻 runner、Windows Task Scheduler/服务停止/重启和真实 adapter 接线。本阶段“启动/停止”仅指运行测试或单次库调用。
+调度循环本身仍是库 API（`Scheduler.run_once()` / `run_until_idle()`）；Phase 1B 目前只接入可测试的本地 DSH 执行/审查原型，尚未增加常驻 runner、Windows Task Scheduler、GitHub 任务源或远程发布。本阶段“启动/停止”仍仅指运行测试或单次库调用。
 
 ## 8. 测试
 
@@ -150,7 +153,7 @@ python -m unittest discover -s autopilot/tests -t . -v
 - 三轮返工上限 → `needs-owner`；
 - 执行超时、执行异常、审查超时、空 head、非法状态转换 → 安全暂停；
 - 专用 CI job 会执行 `python -m unittest discover -s autopilot/tests -t . -v` 与 `python -m compileall -q autopilot`。
-- adapter 默认关闭/凭证缺失 fail-closed；启用后仍为占位、不发真实请求；无 merge/main/upstream push 路径；
+- 旧占位 adapter 默认关闭；新 DSH runtime 只有显式启用才会启动真实进程。测试通过 fake DSH 子进程验证工作树隔离、超时/租约丢失终止、敏感路径拦截和审查 JSON 校验；无 GitHub push/merge/main/upstream push 路径；
 - 日志脱敏辅助函数。
 
 ## 9. 日志与秘密
@@ -162,13 +165,13 @@ python -m unittest discover -s autopilot/tests -t . -v
 
 ## 10. 已知限制（Phase 1A）
 
-1. 真实 GitHub/DSH adapter 均未实现，仅 fail-closed 占位；不能领取真实任务、不能推送、不能创建 PR。
-2. 没有常驻进程、Windows Task Scheduler、webhook、autonomous review 后端；本阶段只有 mock 闭环。
-3. 审查器是脚本化 fake；不能证明 ChatGPT/API Review 可用。
-4. 执行超时依赖执行器/adapter 返回或抛出；本骨架不做跨进程强制终止。
+1. GitHub task source / push / PR publication adapter 尚未实现；当前不能领取 GitHub 任务、不能推送、不能创建 PR。
+2. 没有常驻进程、Windows Task Scheduler 或 webhook；自动化循环仍未部署。
+3. 自动审查使用单独的 DSH headless 调用，不等同于 ChatGPT API，也不代表模型判断可靠；需人工抽查审查质量。
+4. DSH 子进程支持超时/租约丢失时终止进程树；真实 Windows 进程树终止与本机 DSH 凭证链仍需现场验收。
 5. 单机 SQLite；跨机器并发不在范围内。
 6. 不包含 main 合并、auto-merge、总仓库推送路径；未来也必须保留王靖贻的人工授权门禁。
 
 ## 11. 证据边界
 
-本目录的测试是 **mock 驱动的本地闭环**，不是真实 DeepSeek/GitHub 无人值守系统上线。真实 headless 凭证、真实 GitHub 写权限、Review 后端、常驻 runner 均未接入；它们是 Phase 1B 的前置条件。
+本目录的测试包括 mock 调度闭环与对 DSH 子进程/隔离 worktree 的模拟集成测试；**它们不等于在用户机器上成功调用真实 DeepSeek 模型**。真实 DSH 运行、GitHub 任务源/写权限、远程分支与 PR 发布、常驻 runner 均尚未接入或验收。
