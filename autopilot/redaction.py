@@ -1,8 +1,4 @@
-"""Small log-redaction helper.
-
-The Phase 1A scheduler never puts environment values into logs; this helper is
-provided for future adapters that may log command lines or errors.
-"""
+"""Small log-redaction helper for scheduler, DSH and GitHub adapter errors."""
 
 from __future__ import annotations
 
@@ -18,8 +14,20 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         r"\1<redacted>",
     ),
     (
+        re.compile(r"(?i)(Authorization:\s*Basic\s+)\S+"),
+        r"\1<redacted>",
+    ),
+    (
         re.compile(r"(?i)(X-Hub-Signature-256:\s*)\S+"),
         r"\1<redacted>",
+    ),
+    (
+        re.compile(r"(?i)\bhttps?://[^/\s:@]+:[^@\s/]+@"),
+        "https://<redacted>@",
+    ),
+    (
+        re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{24,})\b"),
+        "<redacted-token>",
     ),
 )
 

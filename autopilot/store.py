@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from .redaction import redact
 from .models import (
     ALLOWED_TRANSITIONS,
     InvalidTransition,
@@ -695,11 +696,26 @@ class SqliteStore:
                 reason = "reviewer requires owner"
 
             extra: dict[str, Any] = {}
-            if (
-                verdict is ReviewVerdict.CHANGES_REQUESTED
-                and target is TaskStatus.CHANGES_REQUESTED
-            ):
-                extra["rework_rounds"] = int(row["rework_rounds"]) + 1
+            if verdict is ReviewVerdict.CHANGES_REQUESTED:
+                feedback_lines = ["Previous independent review requested changes."]
+                feedback_lines.extend(
+                    f"- {redact(defect)[:700]}"
+                    for defect in review.defects[:20]
+                )
+                if review.notes.strip():
+                    feedback_lines.append("Reviewer notes: " + redact(review.notes)[:1800])
+                extra["last_error"] = "\n".join(feedback_lines)[:6000]
+                if target is TaskStatus.CHANGES_REQUESTED:
+                    extra["rework_rounds"] = int(row["rework_rounds"]) + 1
+            elif verdict is ReviewVerdict.NEEDS_OWNER:
+                feedback_lines = ["Independent review requires owner attention."]
+                feedback_lines.extend(
+                    f"- {redact(defect)[:700]}"
+                    for defect in review.defects[:20]
+                )
+                if review.notes.strip():
+                    feedback_lines.append("Reviewer notes: " + redact(review.notes)[:1800])
+                extra["last_error"] = "\n".join(feedback_lines)[:6000]
             fields = ["status = ?", "updated_at = ?"]
             params: list[Any] = [target.value, now]
             for key, value in extra.items():

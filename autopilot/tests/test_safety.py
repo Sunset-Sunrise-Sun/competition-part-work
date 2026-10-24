@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from autopilot import __file__ as autopilot_file
 from autopilot.adapters import DshHeadlessAdapter, GitHubRestAdapter
+from autopilot.adapters.dsh_runtime import _agent_env
 from autopilot.cli import main as cli_main
 from autopilot.models import (
     AdapterCredentialMissing,
@@ -106,21 +107,65 @@ class AdapterSafetyTest(unittest.TestCase):
                     approved("T1", "head"),
                 )
 
+    def test_dsh_child_environment_strips_secret_variables_but_keeps_runtime_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "empty-git-config"
+            config_path.write_text("", encoding="utf-8")
+            environment = {
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": str(Path(directory)),
+                "AUTOPILOT_DSH_CLI": "dsh",
+                "AUTOPILOT_DSH_ENABLED": "1",
+                "DEEPSEEK_API_KEY": "sk-123456789012345678901234567890",
+                "GITHUB_TOKEN": "ghp_123456789012345678901234567890",
+                "AWS_ACCESS_KEY_ID": "AKIA_TEST",
+                "AWS_SECRET_ACCESS_KEY": "aws-secret-test",
+                "DATABASE_URL": "postgres://user:password@localhost/db",
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                child_env = _agent_env(config_path)
+
+            self.assertIn("PATH", child_env)
+            self.assertIn("AUTOPILOT_DSH_CLI", child_env)
+            self.assertIn("AUTOPILOT_DSH_ENABLED", child_env)
+            self.assertEqual(child_env["GIT_CONFIG_COUNT"], "3")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_0"], "credential.helper")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_0"], "")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_1"], "http.extraheader")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_1"], "")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_2"], "http.https://github.com/.extraheader")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_2"], "")
+            for name in (
+                "DEEPSEEK_API_KEY", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY", "DATABASE_URL",
+            ):
+                self.assertNotIn(name, child_env)
+
     def test_redaction_masks_likely_secrets(self) -> None:
         text = (
             "DEEPSEEK_API_KEY=sk-do-not-log\n"
             "GITHUB_TOKEN=ghp_do_not_log\n"
             "Authorization: Bearer abc.def\n"
-            "X-Hub-Signature-256: deadbeef"
+            "Authorization: Basic dXNlci10b2tlbjpleGFtcGxl\n"
+            "X-Hub-Signature-256: deadbeef\n"
+            "raw token ghp_123456789012345678901234567890\n"
+            "remote https://x-access-token:ghp_123456789012345678901234567890@github.com/acme/repo.git"
         )
         masked = redact(text)
-        for secret in ("sk-do-not-log", "ghp_do_not_log", "abc.def", "deadbeef"):
+        for secret in (
+            "sk-do-not-log", "ghp_do_not_log", "abc.def",
+            "dXNlci10b2tlbjpleGFtcGxl", "deadbeef",
+            "ghp_123456789012345678901234567890",
+        ):
             self.assertNotIn(secret, masked)
         self.assertIn("<redacted>", masked)
 
     def test_source_has_no_merge_or_automatic_main_push_surface(self) -> None:
         package_root = Path(autopilot_file).parent
-        forbidden = ("merge_pull_request", "auto_merge", "git push", "gh pr merge")
+        forbidden = (
+            "merge_pull_request", "auto_merge", "push_main", "gh pr merge",
+            "git push --force", "git push --force-with-lease",
+        )
         for path in package_root.rglob("*.py"):
             if "tests" in path.parts:
                 continue

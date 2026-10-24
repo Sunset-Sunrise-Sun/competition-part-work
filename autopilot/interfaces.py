@@ -1,15 +1,14 @@
-"""Interfaces for task sources, executors and reviewers.
-
-Real adapters are deliberately not wired in Phase 1A. The scheduler only depends
-on these protocols so fake, local implementations can drive the whole loop.
-"""
+"""Protocols for task sources, execution, review and publication hooks."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .models import ExecutionResult, ReviewResult, TaskRecord, TaskSpec
+
+if TYPE_CHECKING:
+    from .scheduler import RunResult
 
 
 class TaskSource(Protocol):
@@ -20,7 +19,7 @@ class TaskSource(Protocol):
 
 
 class Executor(Protocol):
-    """Executes one task attempt in the isolated workspace."""
+    """Executes one task attempt in an isolated workspace."""
 
     def execute(
         self,
@@ -41,4 +40,23 @@ class Reviewer(Protocol):
         head_sha: str,
         timeout_seconds: float,
     ) -> ReviewResult:
-        """Return a structured review bound to ``head_sha``."""
+        """Return a structured review bound to head_sha."""
+
+
+class ApprovedPublisher(Protocol):
+    """Publishes a reviewed commit without merging it."""
+
+    def publish_approved(
+        self,
+        task: TaskRecord,
+        review: ReviewResult,
+        execution: ExecutionResult | None,
+    ) -> str:
+        """Push a dedicated branch and return the Draft PR URL."""
+
+
+class TaskResultNotifier(Protocol):
+    """Synchronizes task state back to its external queue."""
+
+    def on_task_result(self, task: TaskRecord, result: RunResult) -> None:
+        """Update labels/comments after the local state transition."""
