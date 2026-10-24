@@ -322,6 +322,12 @@ class Scheduler:
                 label="empty head_sha",
             )
 
+        if cancel_event is not None and cancel_event.is_set():
+            return self._stale_result(
+                task.task_id,
+                "execute",
+                LeaseLost("lease heartbeat lost before result commit"),
+            )
         try:
             updated = self.store.record_execution_result(
                 task.task_id,
@@ -345,10 +351,6 @@ class Scheduler:
                 stage="execute",
                 status=paused.status,
                 error=str(error),
-            )
-        if cancel_event is not None and cancel_event.is_set():
-            return self._stale_result(
-                task.task_id, "execute", LeaseLost("lease heartbeat lost before result commit")
             )
         return self._review(
             updated, now, fence, execution=result, cancel_event=cancel_event
