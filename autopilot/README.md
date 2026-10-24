@@ -102,7 +102,7 @@ Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
 Runtime adapter 状态：
 
 - `DshHeadlessAdapter`：Phase 1A 占位类仍保留，不执行真实命令。
-- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每个任务使用独立 Git worktree，校验 base/head SHA，屏蔽 GitHub/SSH 发布凭证，拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。
+- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每个任务使用独立 Git worktree，校验 base/head SHA，从子进程环境中移除常见 GitHub token/SSH agent 变量并隔离 Git/GH CLI 配置，拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。
 - `DshDiffReviewer`：独立启动一次 headless 调用，只把脱敏后的精确 base..head patch 传给审查器，要求返回绑定 head SHA 的结构化 JSON；默认由 `AUTOPILOT_REVIEW_ENABLED=1` 显式启用。
 - `GitHubRestAdapter`：仍是 fail-closed 占位类；新增 `GitHubIssueAdapter` 轮询带 `agent:ready` 标签的 Issues，审查通过后只推送 `autopilot/*` 分支并创建 Draft PR；不合并。
 - `python -m autopilot.daemon`：前台轮询 runner，要求显式启用 GitHub/DSH/Review；发布失败不会把任务标记为 done。
@@ -139,7 +139,7 @@ python -m autopilot.cli --db data/autopilot.sqlite3 recover
 
 前台 runner 已接通代码路径：GitHub Issue（`agent:ready`）→ SQLite 队列 → 隔离 worktree 中的 DSH → 独立 DSH diff review → 审查通过后推送专用分支并创建 Draft PR → 回写 Issue 标签/评论。此链路的代码已提交到 Draft 分支，但真实凭证、模型调用和 Windows 任务尚未实跑验收。
 
-## 12. Phase 1C — 首次运行与 Windows 任务
+## 8. Phase 1C — 首次运行与 Windows 任务
 
 先在独立工作区切到 `feat/autopilot-phase1c-github-loop`，安装好 Python、Git 和 DSH CLI。GitHub 端只会领取你手动添加 `agent:ready` 标签的开放 Issue。
 
@@ -173,7 +173,7 @@ Stop-ScheduledTask -TaskName "LocalFitAutopilot"
 
 任务只在用户登录且电脑运行时执行；运行时失败会退出并由 Task Scheduler 有限重启。达到 `needs-owner` 会暂停本轮自动推进。**不自动合并任何 PR。** 首次真实运行前，请先确认本机 DSH profile 的工具权限；worktree 不是 OS 级沙箱，不能把它当作隔离恶意代码的安全边界。
 
-## 8. 测试
+## 9. 测试
 
 ```powershell
 cd D:\原子赛道\workspaces\autopilot-mvp
@@ -195,14 +195,14 @@ python -m unittest discover -s autopilot/tests -t . -v
 - 旧占位 adapter 默认关闭；新 DSH runtime 只有显式启用才会启动真实进程。测试通过 fake DSH 子进程验证工作树隔离、超时/租约丢失终止、敏感路径拦截和审查 JSON 校验；无 GitHub push/merge/main/upstream push 路径；
 - 日志脱敏辅助函数。
 
-## 9. 日志与秘密
+## 10. 日志与秘密
 
 - 调度器只记录 task id、状态、head SHA、错误类型；不会记录环境变量值、token、cookie；
 - `redaction.redact()` 对 `DEEPSEEK_API_KEY=...`、`GITHUB_TOKEN=...`、`Authorization: Bearer ...`、`X-Hub-Signature-256` 做掩码；
 - 测试使用 `dummy-test-only` 字符串，仅验证“adapter 不执行真实动作”，不是真实凭证；
 - 仓库不创建 `.env`，不读取本机凭证存储。
 
-## 10. 已知限制（Phase 1A）
+## 11. 已知限制
 
 1. GitHub Issue 领取、专用分支发布与 Draft PR 创建已有实现和 mock 测试；真实 GitHub 凭证、仓库权限与远端发布仍未验收。
 2. 前台 runner 与 Task Scheduler 安装脚本已实现，但尚未在用户电脑上启动/注册；没有 webhook。
@@ -211,6 +211,6 @@ python -m unittest discover -s autopilot/tests -t . -v
 5. 单机 SQLite；跨机器并发不在范围内。
 6. 不包含 main 合并、auto-merge、总仓库推送路径；未来也必须保留王靖贻的人工授权门禁。
 
-## 11. 证据边界
+## 12. 证据边界
 
 本目录的测试包括 mock 调度闭环、fake DSH 子进程、mock GitHub API 和隔离 worktree 集成测试；**它们不等于在用户机器上成功调用真实 DeepSeek 模型或真实 GitHub 发布**。Phase 1C 代码已接入，但真实 DSH 凭证、Token 权限、Windows 进程终止与计划任务仍需本机验收。
