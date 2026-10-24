@@ -1,0 +1,166 @@
+# Phase 1A — 可恢复、可测试的自动化调度器骨架
+
+> 状态：**本地骨架 + mock 闭环测试；未部署、未提交、未推送、未调用真实模型/GitHub。**
+> 基线：`wjy/three-day-delivery` @ `c788a1ad0237055c74c42b4f80d04e1860787be8`
+> 工作区：`D:/原子赛道/workspaces/autopilot-mvp`（隔离 worktree）
+> 分支：`feat/autopilot-scheduler-mvp`（仅本地，未提交）
+
+## 1. 范围
+
+本阶段实现 Issue #3 / Phase 1A 要求的调度器骨架：
+
+- Python 标准库 + SQLite，无第三方依赖；
+- 六个任务状态：`ready`、`working`、`review`、`changes-requested`、`done`、`needs-owner`；
+- SQLite 持久化的单任务状态机、全局单执行 lease、幂等键、有限重试、超时保护、崩溃恢复；
+- `TaskSource` / `Executor` / `Reviewer` 接口 + fake/mock 实现；
+- 审查结果绑定精确 `head_sha`，新提交使旧审查失效；
+- 真实 GitHub/DSH adapter 仅占位并 **默认关闭**，未配置时 fail-closed；
+- 两个 dummy 任务自动连续推进，其中一个发生返工并重新审查。
+
+**不包含**：真实 GitHub 写入、真实 DSH headless 执行、真实模型调用、Webhook 入站、ChatGPT 自动 Review、常驻 Windows 服务、合并/main/upstream push。
+
+## 2. 目录
+
+```text
+autopilot/
+  models.py           # 状态、审查结论、任务/执行/审查数据类、合法转换
+  interfaces.py       # TaskSource / Executor / Reviewer protocols
+  store.py            # SQLite schema、状态机、lease、幂等、恢复
+  scheduler.py        # 单槽调度循环、执行/审查编排、超时/失败暂停
+  fakes.py            # FakeClock / FakeTaskSource / FakeExecutor / FakeReviewer
+  redaction.py        # 日志脱敏辅助（未来 adapter 使用）
+  cli.py              # status / recover 只读/恢复命令
+  adapters/
+    dsh.py            # DSH headless 占位 adapter（fail-closed）
+    github.py         # GitHub REST 占位 adapter（无 merge 方法）
+  tests/              # unittest 测试
+  README.md
+```
+
+## 3. 状态机
+
+```text
+ready ──claim──> working ──execution ok──> review
+  ^                  │                       │
+  │                  └──retryable error──────┘（有限重试，回到 ready）
+  │                                          │
+  │                    changes-requested <── review: changes（≤3 轮）
+  │                          │               │
+  │                          └──claim──> working
+  │                                          │
+  └──────────── 超时/异常/审查失败/3 轮上限 ──> needs-owner
+
+review: approved ──> done
+```
+
+- 合法转换在 `models.ALLOWED_TRANSITIONS` 中定义；非法转换抛 `InvalidTransition`，不会被静默接受。
+- `needs-owner` 与 `done` 为终态；`needs-owner` 后调度循环停止，等待人工处理。
+- `rework_rounds` 最多为 3：初次执行 + 最多 3 次返工；第 4 次审查仍要求修改时转 `needs-owner`。
+- 执行超时、审查超时、未知异常、审查 head 不匹配、重试上限均转 `needs-owner`。
+
+## 4. 持久化与并发
+
+SQLite 表：
+
+| 表 | 用途 |
+| --- | --- |
+| `tasks` | 任务状态、base/head SHA、轮次、attempts、错误、claim 时间 |
+| `lease` | 单例全局执行 lease（owner/acquired/expires） |
+| `events` | `event_key` 主键的外部事件幂等记录 |
+| `reviews` | 结构化审查（verdict/defects/reviewer/stale/head_sha） |
+| `transitions` | 每次状态迁移审计日志 |
+
+- 所有关键写操作使用 `BEGIN IMMEDIATE` 事务；
+- 全局 lease 由 SQLite 单例行保护，两个调度器不能同时持有有效 lease；
+- `claim_next` 在事务内检查 lease 和任务状态，避免重复领取；
+- `events.event_key` 唯一约束使重复 GitHub 事件/轮询被忽略；
+- `reviews` 对非 stale 的 `(task_id, head_sha, reviewer)` 建唯一索引；
+- 进程崩溃后 `recover()`：过期的 lease 被清除；`working` 且已有 head 的任务进入 `review`（不重复执行），没有 head 的任务回到 `ready`（受 attempts 上限约束）。
+
+## 5. Interfaces 与 fake/mock
+
+```python
+TaskSource.next_ready() -> TaskSpec | None
+Executor.execute(task, attempt, workspace, timeout_seconds) -> ExecutionResult
+Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
+```
+
+- `FakeTaskSource`：按顺序发放任务；重复任务由 `enqueue_task` 幂等吸收。
+- `FakeExecutor`：按脚本返回 head SHA 或抛异常/超时；只记录调用，不触碰真实系统。
+- `FakeReviewer`：按 `(task_id, head_sha)` 返回结构化 verdict；旧 head 的审查无法通过。
+- `FakeClock`：测试中无真实等待。
+
+真实 adapter（本轮**未执行**）：
+
+- `DshHeadlessAdapter.from_env()`：需要 `AUTOPILOT_DSH_ENABLED=1` + `DEEPSEEK_API_KEY` + `AUTOPILOT_DSH_CLI`；即使满足，`execute()` 也只抛 `AdapterNotImplementedError`。
+- `GitHubRestAdapter.from_env()`：需要 `AUTOPILOT_GITHUB_ENABLED=1` + `GITHUB_TOKEN`；即使满足，所有方法也只抛 `AdapterNotImplementedError`；**没有 merge 方法**。
+- 默认未设置环境变量时均抛 `AdapterDisabledError`；有开关但无凭证时抛 `AdapterCredentialMissing`。
+
+## 6. 配置
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| SQLite 路径 | `data/autopilot.sqlite3`（CLI） | 每个隔离工作区独立 |
+| `max_attempts` | 2 | 同阶段连续执行失败/崩溃重试上限 |
+| `max_rework_rounds` | 3 | 最多 3 轮返工 |
+| `lease_ttl_seconds` | 60 | 全局 lease 过期时间 |
+| `execution_timeout_seconds` | 300 | 执行超时（adapter/执行器负责落地） |
+| `review_timeout_seconds` | 60 | 审查超时 |
+| `max_steps_per_run` | 50 | 单次 `run_until_idle` 上限，防止无限循环 |
+
+环境变量只作为未来 adapter 的开关/凭证存在性检查，本阶段测试不会读取或写入任何真实密钥，也不创建 `.env`。
+
+## 7. 启动 / 停止
+
+本阶段**没有常驻服务**；不要把它当作已上线无人值守系统。
+
+```powershell
+cd D:\原子赛道\workspaces\autopilot-mvp
+
+# 只读查看任务/lease 状态
+python -m autopilot.cli --db data/autopilot.sqlite3 status
+
+# 崩溃后恢复过期 lease / working 任务
+python -m autopilot.cli --db data/autopilot.sqlite3 recover
+```
+
+调度循环本身是库 API（`Scheduler.run_once()` / `run_until_idle()`）；未来 Phase 1B 才会增加常驻 runner、Windows Task Scheduler/服务停止/重启和真实 adapter 接线。本阶段“启动/停止”仅指运行测试或单次库调用。
+
+## 8. 测试
+
+```powershell
+cd D:\原子赛道\workspaces\autopilot-mvp
+python -m unittest discover -s autopilot/tests -t . -v
+```
+
+覆盖：
+
+- 两个 dummy 任务自动连续推进；T1 一次返工后通过，T2 直接通过；
+- 重复轮询/重复事件/重复审查不重复执行；
+- 两个调度器不能同时持有有效 lease（含并发线程）；
+- 进程崩溃后：已提交执行进入 review、不重复执行；未提交执行受 attempts 限制重试；
+- 审查绑定精确 head SHA；旧 SHA 审查不能通过；
+- 三轮返工上限 → `needs-owner`；
+- 执行超时、执行异常、审查超时、空 head、非法状态转换 → 安全暂停；
+- adapter 默认关闭/凭证缺失 fail-closed；启用后仍为占位、不发真实请求；无 merge/main/upstream push 路径；
+- 日志脱敏辅助函数。
+
+## 9. 日志与秘密
+
+- 调度器只记录 task id、状态、head SHA、错误类型；不会记录环境变量值、token、cookie；
+- `redaction.redact()` 对 `DEEPSEEK_API_KEY=...`、`GITHUB_TOKEN=...`、`Authorization: Bearer ...`、`X-Hub-Signature-256` 做掩码；
+- 测试使用 `dummy-test-only` 字符串，仅验证“adapter 不执行真实动作”，不是真实凭证；
+- 仓库不创建 `.env`，不读取本机凭证存储。
+
+## 10. 已知限制（Phase 1A）
+
+1. 真实 GitHub/DSH adapter 均未实现，仅 fail-closed 占位；不能领取真实任务、不能推送、不能创建 PR。
+2. 没有常驻进程、Windows Task Scheduler、webhook、autonomous review 后端；本阶段只有 mock 闭环。
+3. 审查器是脚本化 fake；不能证明 ChatGPT/API Review 可用。
+4. 执行超时依赖执行器/adapter 返回或抛出；本骨架不做跨进程强制终止。
+5. 单机 SQLite；跨机器并发不在范围内。
+6. 不包含 main 合并、auto-merge、总仓库推送路径；未来也必须保留王靖贻的人工授权门禁。
+
+## 11. 证据边界
+
+本目录的测试是 **mock 驱动的本地闭环**，不是真实 DeepSeek/GitHub 无人值守系统上线。真实 headless 凭证、真实 GitHub 写权限、Review 后端、常驻 runner 均未接入；它们是 Phase 1B 的前置条件。
