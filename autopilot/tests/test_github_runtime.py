@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.error import URLError
 
@@ -271,6 +272,32 @@ class GitHubIssueQueueTest(unittest.TestCase):
             remove=["agent:ready", "agent:working", "agent:changes-requested"],
         )
         self.assertIn("DSH timed out", adapter._add_comment_once.call_args.args[2])
+
+    def test_publisher_git_ignores_inherited_git_auth_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_result = SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+            inherited = {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.extraheader",
+                "GIT_CONFIG_VALUE_0": "AUTHORIZATION: Basic inherited-secret",
+                "GIT_CONFIG_PARAMETERS": "'credential.helper=unsafe'",
+            }
+            with patch.dict(os.environ, inherited, clear=False):
+                with patch("autopilot.adapters.github_runtime.subprocess.run", return_value=fake_result) as run:
+                    self.assertEqual(_git(root, "status", token="test-token"), "ok")
+            child_env = run.call_args.kwargs["env"]
+            self.assertNotIn("GIT_CONFIG_PARAMETERS", child_env)
+            self.assertEqual(child_env["GIT_CONFIG_COUNT"], "4")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_0"], "credential.helper")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_0"], "")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_1"], "http.extraheader")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_1"], "")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_2"], "http.https://github.com/.extraheader")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_2"], "")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_3"], "http.https://github.com/.extraheader")
+            self.assertTrue(child_env["GIT_CONFIG_VALUE_3"].startswith("AUTHORIZATION: basic "))
+            self.assertNotIn("inherited-secret", repr(child_env))
 
     def test_api_errors_do_not_echo_token(self) -> None:
         adapter = make_adapter(self.root)
