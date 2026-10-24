@@ -128,6 +128,11 @@ class AdapterSafetyTest(unittest.TestCase):
             self.assertIn("PATH", child_env)
             self.assertIn("AUTOPILOT_DSH_CLI", child_env)
             self.assertIn("AUTOPILOT_DSH_ENABLED", child_env)
+            self.assertEqual(child_env["GIT_CONFIG_COUNT"], "2")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_0"], "credential.helper")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_0"], "")
+            self.assertEqual(child_env["GIT_CONFIG_KEY_1"], "http.extraheader")
+            self.assertEqual(child_env["GIT_CONFIG_VALUE_1"], "")
             for name in (
                 "DEEPSEEK_API_KEY", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID",
                 "AWS_SECRET_ACCESS_KEY", "DATABASE_URL",
