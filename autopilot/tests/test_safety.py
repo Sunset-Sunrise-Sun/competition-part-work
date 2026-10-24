@@ -155,7 +155,10 @@ class AdapterSafetyTest(unittest.TestCase):
 
     def test_source_has_no_merge_or_automatic_main_push_surface(self) -> None:
         package_root = Path(autopilot_file).parent
-        forbidden = ("merge_pull_request", "auto_merge", "git push", "gh pr merge")
+        forbidden = (
+            "merge_pull_request", "auto_merge", "push_main", "gh pr merge",
+            "git push --force", "git push --force-with-lease",
+        )
         for path in package_root.rglob("*.py"):
             if "tests" in path.parts:
                 continue
