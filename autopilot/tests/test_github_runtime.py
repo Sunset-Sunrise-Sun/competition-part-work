@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.error import URLError
 
-from autopilot.adapters.github_runtime import GitHubIssueAdapter, GitHubRuntimeError
+from autopilot.adapters.github_runtime import GitHubApiError, GitHubIssueAdapter, GitHubRuntimeError, _git
 from autopilot.fakes import FakeExecutor, FakeReviewer, FakeTaskSource
 from autopilot.models import (
     ExecutionResult,
