@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from autopilot.adapters.github_runtime import GitHubApiError, GitHubIssueAdapter, GitHubRuntimeError
+from autopilot.models import (
+    ExecutionResult,
+    ReviewResult,
+    ReviewVerdict,
+    TaskRecord,
+    TaskSpec,
+    TaskStatus,
+)
+from autopilot.scheduler import Scheduler, SchedulerConfig
+from autopilot.fakes import FakeExecutor, FakeReviewer, FakeTaskSource
+from autopilot.store import SqliteStore
+from autopilot.tests.support import approved, task
+
+
+SHA = "a" * 40
+HEAD = "b" * 40
+
+
+def issue(number: int, labels: list[str], *, is_pr: bool = False) -> dict:
+    item = {
+        "number": number,
+        "title": f"Task {number}",
+        "body": f"Instructions for task {number}",
+        "html_url": f"https://github.com/acme/repo/issues/{number}",
+        "labels": [{"name": name} for name in labels],
+    }
+    if is_pr:
+        item["pull_request"] = {"url": "https://api.github.com/pulls/9"}
+    return item
+
+
+def make_adapter(root: Path) -> GitHubIssueAdapter:
+    return GitHubIssueAdapter(
+        repository="acme/repo",
+        base_branch="develop",
+        repo_root=root,
+        token="test-token",
+        enabled=True,
+        poll_interval_seconds=5,
+    )
+
+
+def record(root: Path, *, status: TaskStatus = TaskStatus.REVIEW) -> TaskRecord:
+    return TaskRecord(
+        task_id="gh-issue-7",
+        title="Fix a bounded issue",
+        status=status,
+        base_sha=SHA,
+        head_sha=HEAD,
+        payload={
+            "issue_number": 7,
+            "repository": "acme/repo",
+            "base_branch": "develop",
+            "repo_root": str(root),
+            "instructions": "Fix the reported defect",
+        },
+        rework_rounds=0,
+        attempts=1,
+        last_error=None,
+        branch=None,
+        created_at=0.0,
+        updated_at=0.0,
+    )
+
+
+class GitHubIssueQueueTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        # The adapter checks that the configured directory is a Git repository.
+        import subprocess
+        subprocess.run(["git", "init", str(self.root)], check=True, capture_output=True)
+
+    def test_next_ready_uses_issue_label_and_ignores_pull_requests(self) -> None:
+        adapter = make_adapter(self.root)
+        adapter._ensure_label = Mock()
+        adapter._fetch_base_sha = Mock(return_value=SHA)
+        adapter._ready_issues = Mock(return_value=[
+            issue(1, ["agent:ready"]),
+            issue(2, ["agent:ready"], is_pr=True),
+            issue(3, ["needs-owner"]),
+            issue(4, ["agent:ready"]),
+        ])
+
+        first = adapter.next_ready()
+        second = adapter.next_ready()
+        third = adapter.next_ready()
+
+        self.assertIsInstance(first, TaskSpec)
+        self.assertIsInstance(second, TaskSpec)
+        self.assertIsNone(third)
+        self.assertEqual(first.task_id, "gh-issue-1")
+        self.assertEqual(first.base_sha, SHA)
+        self.assertEqual(first.payload["issue_number"], 1)
+        self.assertEqual(first.payload["repository"], "acme/repo")
+        self.assertEqual(second.task_id, "gh-issue-4")
+        adapter._fetch_base_sha.assert_called_once()
+        adapter._ready_issues.assert_called_once()
+
+    def test_disabled_adapter_fails_closed(self) -> None:
+        with self.assertRaises(GitHubRuntimeError):
+            GitHubIssueAdapter(
+                repository="acme/repo",
+                base_branch="develop",
+                repo_root=self.root,
+                token="test-token",
+                enabled=False,
+            )
+
+    def test_from_env_requires_explicit_enable_and_configuration(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(GitHubRuntimeError):
+                GitHubIssueAdapter.from_env(self.root)
+        with patch.dict(os.environ, {
+            "AUTOPILOT_GITHUB_ENABLED": "1",
+            "GITHUB_TOKEN": "test-token",
+            "AUTOPILOT_GITHUB_REPOSITORY": "acme/repo",
+            "AUTOPILOT_GITHUB_BASE_BRANCH": "develop",
+        }, clear=True):
+            adapter = GitHubIssueAdapter.from_env(self.root)
+            self.assertEqual(adapter.repository, "acme/repo")
+            self.assertEqual(adapter.base_branch, "develop")
+
+    def test_approved_commit_is_pushed_to_dedicated_branch_and_draft_pr_is_idempotent(self) -> None:
+        adapter = make_adapter(self.root)
+        task_record = record(self.root)
+        review = ReviewResult(
+            verdict=ReviewVerdict.APPROVED,
+            head_sha=HEAD,
+            reviewer="test-reviewer",
+            notes="No blocking defect found.",
+        )
+        execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
+        adapter._git = Mock(side_effect=[HEAD, "", ""])
+        adapter._request = Mock(side_effect=[
+            [],  # no existing open PR
+            {"html_url": "https://github.com/acme/repo/pull/19"},  # create draft PR
+            [],  # issue comments
+            {},  # comment created
+        ])
+        url = adapter.publish_approved(task_record, review, execution)
+
+        self.assertEqual(url, "https://github.com/acme/repo/pull/19")
+        self.assertEqual(adapter._published_prs["gh-issue-7"], url)
+        push_calls = [call for call in adapter._git.call_args_list if len(call.args) > 1 and call.args[1] == "push"]
+        self.assertEqual(len(push_calls), 1)
+        self.assertIn("refs/heads/autopilot/gh-issue-7:refs/heads/autopilot/gh-issue-7", push_calls[0].args)
+        create_pr_call = adapter._request.call_args_list[1]
+        self.assertEqual(create_pr_call.args[0], "POST")
+        self.assertEqual(create_pr_call.args[1], "/pulls")
+        self.assertTrue(create_pr_call.args[2]["draft"])
+        self.assertEqual(create_pr_call.args[2]["base"], "develop")
+        self.assertFalse(hasattr(adapter, "merge_pull_request"))
+
+    def test_existing_draft_pr_is_reused_without_creating_another(self) -> None:
+        adapter = make_adapter(self.root)
+        task_record = record(self.root)
+        review = ReviewResult(ReviewVerdict.APPROVED, HEAD, reviewer="test-reviewer")
+        execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
+        adapter._git = Mock(side_effect=[HEAD, ""])
+        adapter._request = Mock(side_effect=[
+            [{"html_url": "https://github.com/acme/repo/pull/19"}],
+            [],  # issue comments
+            {},  # issue comment
+        ])
+        url = adapter.publish_approved(task_record, review, execution)
+        self.assertEqual(url, "https://github.com/acme/repo/pull/19")
+        self.assertFalse(any(call.args[:2] == ("POST", "/pulls") for call in adapter._request.call_args_list))
+
+    def test_task_result_notifier_updates_labels_and_adds_owner_comment(self) -> None:
+        adapter = make_adapter(self.root)
+        task_record = record(self.root)
+        adapter._set_labels = Mock()
+        adapter._add_comment_once = Mock()
+        from autopilot.scheduler import RunResult
+        adapter.on_task_result(task_record, RunResult(
+            task_id=task_record.task_id,
+            stage="execute",
+            status=TaskStatus.NEEDS_OWNER,
+            error="DSH timed out",
+        ))
+        adapter._set_labels.assert_called_once_with(
+            7,
+            add=["needs-owner"],
+            remove=["agent:ready", "agent:working", "agent:changes-requested"],
+        )
+        self.assertIn("DSH timed out", adapter._add_comment_once.call_args.args[2])
+
+    def test_api_errors_do_not_echo_token(self) -> None:
+        adapter = make_adapter(self.root)
+        with patch("autopilot.adapters.github_runtime.urlopen", side_effect=HTTPErrorStub()):
+            with self.assertRaises(GitHubApiError) as caught:
+                adapter._request("GET", "/issues")
+        self.assertNotIn("test-token", str(caught.exception))
+
+
+class HTTPErrorStub(Exception):
+    code = 403
+
+    def read(self) -> bytes:
+        return b'{"message":"forbidden"}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class PublisherGateTest(unittest.TestCase):
+    def test_failed_publication_cannot_mark_review_approved_task_done(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            store = SqliteStore(root / "state.sqlite3")
+            try:
+                source = FakeTaskSource([task("T-publish")])
+                executor = FakeExecutor({"T-publish": [ExecutionResult(HEAD)]})
+                reviewer = FakeReviewer({("T-publish", HEAD): approved("T-publish", HEAD)})
+
+                class FailingPublisher:
+                    def publish_approved(self, task, review, execution):
+                        raise RuntimeError("simulated remote publication failure")
+
+                scheduler = Scheduler(
+                    store,
+                    source,
+                    executor,
+                    reviewer,
+                    workspace,
+                    config=SchedulerConfig(),
+                    publisher=FailingPublisher(),
+                )
+                result = scheduler.run_once()
+                self.assertIsNotNone(result)
+                self.assertEqual(result.status, TaskStatus.NEEDS_OWNER)
+                self.assertEqual(store.counts()["done"], 0)
+                self.assertEqual(store.counts()["needs-owner"], 1)
+                self.assertEqual(store.review_count(), 0)
+            finally:
+                store.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
