@@ -245,7 +245,7 @@ def _run_headless(
         except subprocess.TimeoutExpired:
             first = False
     if process.returncode != 0:
-        message = (stderr or stdout).strip()[-2000:]
+        message = redact((stderr or stdout).strip()[-2000:])
         raise DshRuntimeError(f"DSH exited {process.returncode}: {message}")
     events: list[dict[str, object]] = []
     for line in stdout.splitlines():
@@ -310,6 +310,7 @@ class DshWorktreeExecutor:
         worktree = worktree_parent / "repo"
         config_path = worktree_parent / "empty-git-config"
         config_path.write_text("", encoding="utf-8")
+        committed = False
         try:
             _run_git(repo, "worktree", "add", "--force", str(worktree), branch)
             prompt = (
@@ -356,6 +357,7 @@ class DshWorktreeExecutor:
                 raise LeaseLost("lease heartbeat lost before commit")
             _run_git(worktree, "commit", "-m", f"agent: {task.task_id} attempt {attempt}", timeout=60)
             head_sha = _run_git(worktree, "rev-parse", "HEAD")
+            committed = True
             return ExecutionResult(
                 head_sha=head_sha,
                 summary=f"DSH completed; {len(staged_paths)} files changed",
@@ -370,6 +372,11 @@ class DshWorktreeExecutor:
                 _run_git(repo, "worktree", "prune", "--expire", "now", timeout=30)
             except DshRuntimeError:
                 pass
+            if not committed:
+                try:
+                    _run_git(repo, "branch", "-f", branch, start_sha)
+                except DshRuntimeError:
+                    pass
             shutil.rmtree(worktree_parent, ignore_errors=True)
 
 
