@@ -93,9 +93,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     stop_event = threading.Event()
+    scheduler_ref: list[Scheduler | None] = [None]
 
     def request_stop(_signum: int, _frame: object) -> None:
         stop_event.set()
+        active_scheduler = scheduler_ref[0]
+        if active_scheduler is not None:
+            active_scheduler.request_stop()
 
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -113,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         publisher=adapter,
         notifier=adapter,
     )
+    scheduler_ref[0] = scheduler
     try:
         _reconcile_terminal_tasks(store, adapter)
         _emit({
