@@ -20,7 +20,14 @@ import {
 } from 'lucide-react';
 import { EXERCISE_GROUPS, EXERCISE_IDS, EXERCISES, exerciseLabel, isExercise } from './catalog';
 import { ExerciseEngine, simulatedPose } from './engine';
-import { acceptReport, decideReport, request } from './api';
+import {
+  acceptReport,
+  decideReport,
+  getSessionState,
+  isApiError,
+  reportSafetyEvent,
+  request,
+} from './api';
 import { ActivityTracker, type ActivityState } from './activity';
 import { LandmarkRecorder, type ReplayClip } from './replay';
 import { runtimeMode, strictOffline } from './runtime';
@@ -29,7 +36,8 @@ import { dailyRequirement, sessionEnergy, type ActivityLevel, type Sex } from '.
 import { estimateFoods, searchFoods } from './foods';
 import { defaultProfile, retargetPose } from './smpl';
 import type { BodyModel } from './smpl';
-import type { Exercise, Metrics, Point, Report, SourceMode } from './types';
+import type { Exercise, Metrics, Point, Report, SessionState, SourceMode } from './types';
+import type { ExplanationResponse } from './types';
 const roleNames: Record<string, string> = {
   training_analyst: '训练分析',
   plan_adapter: '计划调整',
@@ -45,6 +53,94 @@ const emptyMetrics: Metrics = {
   events: 0,
   squatReps: [],
 };
+const SAFETY_STOP_NOTICE =
+  '已记录不适：本次训练已立即停止计时与动作处理。取消勾选不会解除本组阻断；请结束本组查看阻断报告。本页不会自动开始新训练组。';
+const SAFETY_SYNC_PENDING_NOTICE =
+  '本地已阻断；服务端同步状态待确认（服务端可能尚未记录该事件）。恢复连接后可重试同步，重试沿用同一事件 ID。';
+const SAFETY_SYNC_FAILED_NOTICE =
+  '本地已阻断，但服务端同步失败（网络/服务异常，事件可能未记录）。本组仍不可继续；可重试同步同一事件。';
+const SAFETY_EXPIRED_NOTICE =
+  '服务端会话已过期：旧报告不能继续用于本组。请开始新的训练组（不会复用旧报告或旧锁存）。';
+const SAFETY_STATE_UNKNOWN_NOTICE =
+  '无法确认服务端安全状态：本组保持不可继续。请刷新页面或重试状态查询后再开始。';
+const SAFETY_STATE_CHECKING_NOTICE =
+  '正在核对服务端会话状态：核对完成前不能开始训练、提交决定或生成报告。';
+const SAFETY_STORAGE_NOTICE =
+  '浏览器无法持久化安全状态（会话 ID / 安全锁存）：后端模式下本组保持不可开始或继续，刷新后也不会假定已恢复。请检查浏览器存储权限后刷新页面。';
+const SAFETY_SESSION_MISSING_NOTICE =
+  '本地保存的训练会话在服务端不存在（可能服务端重启或数据被清理）。本组无法恢复；不会复用旧会话 ID，也不会自动开始新组。';
+const SAFETY_ANALYSIS_LOST_NOTICE =
+  '上一次分析可能已在服务端提交，但本页没有收到报告。本组安全阻断仍然有效；不会重复使用相同 input_version 发送不同内容。';
+// Session identity and the local safety latch are persisted separately from the
+// user history so deleting history never deletes the active session or its latch.
+export const ACTIVE_SESSION_KEY = 'localfit-active-session';
+export const LOCAL_SAFETY_KEY = 'localfit-safety-latch';
+
+type StoredSafety = {
+  session_id: string;
+  event_id: string;
+  server_confirmed: boolean;
+  safety_version: number | null;
+};
+
+type AnalysisPayload = Record<string, unknown>;
+type AnalysisRecovery = {
+  session_id: string;
+  reason: 'lost' | 'pre-latch';
+  serverInputVersion: number | null;
+  reportRecoverable: boolean;
+  nextInputVersion: number;
+};
+type RemoteDecision = {
+  session_id: string;
+  status: 'accepted' | 'rejected';
+  decided_at: string | null;
+  recoverable: boolean;
+};
+
+function readStored<T>(key: string): T | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+/** Returns false when the write could not be guaranteed (private mode/quota). */
+function writeStored(key: string, value: unknown): boolean {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function removeStored(key: string): boolean {
+  try {
+    sessionStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+/** Detect unusable sessionStorage before trusting any recovery assumption. */
+function probeSessionStorage(): boolean {
+  const probe = 'localfit-storage-probe';
+  try {
+    sessionStorage.setItem(probe, '1');
+    sessionStorage.removeItem(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+/** A stored active-session id or a stored latch must gate the initial paint. */
+function storedSessionCandidate(): string | null {
+  const active = readStored<{ session_id?: string }>(ACTIVE_SESSION_KEY);
+  if (active?.session_id) return active.session_id;
+  const latch = readStored<StoredSafety>(LOCAL_SAFETY_KEY);
+  return latch?.session_id ?? null;
+}
 
 export default function App() {
   const [tab, setTab] = useState('training');
@@ -69,6 +165,7 @@ export default function App() {
   const [threshold, setThreshold] = useState(105);
   const [fatigue, setFatigue] = useState(4);
   const [discomfort, setDiscomfort] = useState(false);
+  const [discomfortBlocked, setDiscomfortBlocked] = useState(false);
   const [persist, setPersist] = useState(false);
   const [captureLandmarks, setCaptureLandmarks] = useState(false);
   const recorder = useRef(new LandmarkRecorder());
@@ -140,11 +237,97 @@ export default function App() {
   const metricRef = useRef(emptyMetrics);
   const profileRef = useRef(defaultProfile());
   const showRawRef = useRef(true);
+  const discomfortBlockedRef = useRef(false);
+  const finishInFlightRef = useRef(false);
+  const finishAbortRef = useRef<AbortController | null>(null);
+  const decisionAbortRef = useRef<AbortController | null>(null);
+  // FE-BE-01: a stable session id exists before any real action processing starts
+  // and is shared by the safety event, analysis, explanation and decisions.
+  const sessionIdRef = useRef<string | null>(null);
+  const safetyEventIdRef = useRef<string | null>(null);
+  const stateUnknownRef = useRef(false);
+  const [safetySync, setSafetySync] = useState<
+    'idle' | 'syncing' | 'pending' | 'confirmed' | 'expired'
+  >('idle');
+  const [safetyVersion, setSafetyVersion] = useState<number | null>(null);
+  const [stateUnknown, setStateUnknown] = useState(false);
+  // FE-BE-01-R1: fail-closed gates.
+  // - sessionChecking: a stored session exists and GET /state has not answered yet.
+  // - storageFault: sessionStorage cannot persist the session id / latch.
+  // - sessionUninitialized: the backend answered 404 for the stored session id.
+  const [sessionChecking, setSessionChecking] = useState<boolean>(
+    () => runtimeMode === 'backend' && Boolean(storedSessionCandidate()),
+  );
+  const [storageFault, setStorageFault] = useState<boolean>(
+    () => runtimeMode === 'backend' && !probeSessionStorage(),
+  );
+  const [sessionUninitialized, setSessionUninitialized] = useState(false);
+  const [analysisRecovery, setAnalysisRecovery] = useState<AnalysisRecovery | null>(null);
+  const [remoteDecision, setRemoteDecision] = useState<RemoteDecision | null>(null);
+  const sessionCheckingRef = useRef(sessionChecking);
+  const storageFaultRef = useRef(storageFault);
+  const uninitializedRef = useRef(false);
+  const inputVersionRef = useRef(1);
+  const lastAnalyzeRef = useRef<{
+    sessionId: string;
+    inputVersion: number;
+    payload: AnalysisPayload;
+  } | null>(null);
+  const reportRef = useRef<Report | null>(null);
+  const explanationAbortRef = useRef<AbortController | null>(null);
+  const explanationTokenRef = useRef(0);
 
   useEffect(() => {
     request('/health')
       .then(() => setApiReady(true))
       .catch(() => setApiReady(false));
+  }, []);
+  useEffect(() => {
+    reportRef.current = report;
+  }, [report]);
+  // FE-BE-01-R1: on backend-mode reload, restore the active session id and read
+  // the authoritative safety state. The page starts in an explicit checking state
+  // when any stored session/latch exists; nothing may overwrite server state until
+  // GET /state has answered. A local latch already recorded is kept, never cleared
+  // by an older server snapshot, and a latch key without the active-session key is
+  // still honoured instead of being silently ignored.
+  useEffect(() => {
+    if (runtimeMode !== 'backend') {
+      sessionCheckingRef.current = false;
+      setSessionChecking(false);
+      return;
+    }
+    const healthy = probeSessionStorage();
+    storageFaultRef.current = !healthy;
+    if (!healthy) {
+      setStorageFault(true);
+      setError(SAFETY_STORAGE_NOTICE);
+    }
+    const active = readStored<{ session_id?: string }>(ACTIVE_SESSION_KEY);
+    const storedSafety = readStored<StoredSafety>(LOCAL_SAFETY_KEY);
+    const sessionId = active?.session_id ?? storedSafety?.session_id ?? null;
+    if (!sessionId) {
+      sessionCheckingRef.current = false;
+      setSessionChecking(false);
+      return;
+    }
+    sessionIdRef.current = sessionId;
+    if (!active?.session_id) {
+      // The latch survived but the active-session key did not. Re-persist the
+      // identity best-effort and keep the block regardless of the outcome.
+      if (!writeStored(ACTIVE_SESSION_KEY, { session_id: sessionId })) noteStorageFault();
+    }
+    if (storedSafety && storedSafety.session_id === sessionId && storedSafety.event_id) {
+      safetyEventIdRef.current = storedSafety.event_id;
+      if (storedSafety.safety_version != null) setSafetyVersionValue(storedSafety.safety_version);
+      discomfortBlockedRef.current = true;
+      setDiscomfort(true);
+      setDiscomfortBlocked(true);
+      setSafetySyncState(storedSafety.server_confirmed ? 'confirmed' : 'pending');
+    }
+    sessionCheckingRef.current = true;
+    setSessionChecking(true);
+    void refreshSessionState(sessionId);
   }, []);
   useEffect(() => {
     live.current.running = running;
@@ -163,6 +346,17 @@ export default function App() {
     showRawRef.current = showRaw;
   }, [showRaw]);
   useEffect(() => {
+    // Changing exercise/threshold/source discards the visible report. Retire the
+    // old session so a later analysis never reuses its input_version=1 with
+    // different content.
+    if (
+      runtimeMode === 'backend' &&
+      sessionIdRef.current &&
+      reportRef.current &&
+      !discomfortBlockedRef.current
+    ) {
+      retireSessionStorage();
+    }
     engine.current = new ExerciseEngine(exercise, threshold);
     recorder.current = new LandmarkRecorder();
     generation.current++;
@@ -284,14 +478,590 @@ export default function App() {
     };
   }, []);
 
+  function releaseCamera() {
+    const media = stream.current;
+    stream.current = null;
+    if (media) {
+      for (const track of media.getTracks()) {
+        try {
+          track.stop();
+        } catch {
+          // A track may already be stopped by the browser.
+        }
+      }
+    }
+    if (video.current) {
+      try {
+        video.current.pause();
+      } catch {
+        // JSDOM and some browsers can throw if the element is not ready.
+      }
+      if (video.current.srcObject) {
+        try {
+          video.current.srcObject = null;
+        } catch {
+          // The element can already be detached during unmount.
+        }
+      }
+    }
+  }
+
+  // --- FE-BE-01 session / safety lifecycle --------------------------------
+  function setSafetySyncState(next: 'idle' | 'syncing' | 'pending' | 'confirmed' | 'expired') {
+    setSafetySync(next);
+  }
+  function setSafetyVersionValue(next: number | null) {
+    setSafetyVersion(next);
+  }
+  function setChecking(next: boolean) {
+    sessionCheckingRef.current = next;
+    setSessionChecking(next);
+  }
+  function setUninitialized(next: boolean) {
+    uninitializedRef.current = next;
+    setSessionUninitialized(next);
+  }
+  function noteStorageFault() {
+    storageFaultRef.current = true;
+    setStorageFault(true);
+    setError(SAFETY_STORAGE_NOTICE);
+  }
+  function clearRecovery() {
+    setAnalysisRecovery(null);
+  }
+  function beginSession(): boolean {
+    // Fail-closed: without guaranteed persistence the session id/latch could not
+    // be restored after a refresh, so a new group must not start.
+    if (storageFaultRef.current) {
+      setError(SAFETY_STORAGE_NOTICE);
+      return false;
+    }
+    const id = crypto.randomUUID();
+    if (!removeStored(LOCAL_SAFETY_KEY) || !writeStored(ACTIVE_SESSION_KEY, { session_id: id })) {
+      sessionIdRef.current = null;
+      noteStorageFault();
+      return false;
+    }
+    sessionIdRef.current = id;
+    safetyEventIdRef.current = null;
+    inputVersionRef.current = 1;
+    lastAnalyzeRef.current = null;
+    clearRecovery();
+    setUninitialized(false);
+    setSafetySyncState('idle');
+    setSafetyVersionValue(null);
+    stateUnknownRef.current = false;
+    setStateUnknown(false);
+    return true;
+  }
+  function ensureSession(): string | null {
+    if (!sessionIdRef.current && !beginSession()) return null;
+    return sessionIdRef.current;
+  }
+  function retireSessionStorage() {
+    const ok = removeStored(ACTIVE_SESSION_KEY) && removeStored(LOCAL_SAFETY_KEY);
+    sessionIdRef.current = null;
+    safetyEventIdRef.current = null;
+    inputVersionRef.current = 1;
+    lastAnalyzeRef.current = null;
+    setSafetySyncState('idle');
+    setSafetyVersionValue(null);
+    setUninitialized(false);
+    setAnalysisRecovery(null);
+    if (!ok) noteStorageFault();
+  }
+  function completeSession() {
+    retireSessionStorage();
+    setRemoteDecision(null);
+  }
+  function expireCurrentSession(targetSessionId: string) {
+    enterBlockedState();
+    setSafetySyncState('expired');
+    removeStored(LOCAL_SAFETY_KEY);
+    removeStored(ACTIVE_SESSION_KEY);
+    sessionIdRef.current = null;
+    safetyEventIdRef.current = null;
+    inputVersionRef.current = 1;
+    lastAnalyzeRef.current = null;
+    setUninitialized(false);
+    setAnalysisRecovery(null);
+    setRemoteDecision(null);
+    setReport(null);
+    setExplanation('');
+    setError(SAFETY_EXPIRED_NOTICE);
+    void targetSessionId;
+  }
+  function enterBlockedState() {
+    discomfortBlockedRef.current = true;
+    setDiscomfort(true);
+    setDiscomfortBlocked(true);
+    live.current.running = false;
+    live.current.frameBusy = false;
+    generation.current++;
+    setRunning(false);
+    releaseCamera();
+    finishAbortRef.current?.abort();
+    finishAbortRef.current = null;
+    decisionAbortRef.current?.abort();
+    decisionAbortRef.current = null;
+    // A late explanation response must never be shown after the latch.
+    explanationTokenRef.current++;
+    explanationAbortRef.current?.abort();
+    explanationAbortRef.current = null;
+  }
+  function adoptSessionState(targetSessionId: string, state: SessionState) {
+    setSafetyVersionValue(state.safety_version);
+    if (state.input_version != null) inputVersionRef.current = state.input_version;
+    if (sessionIdRef.current === targetSessionId) {
+      setReport((prev) => {
+        if (!prev || prev.session_id !== targetSessionId) return prev;
+        const next: Report = {
+          ...prev,
+          safety_latched: state.safety_latched,
+          safety_version: state.safety_version,
+        };
+        if (state.input_version != null) next.input_version = state.input_version;
+        if (state.proposal_status) {
+          next.proposal = {
+            ...prev.proposal,
+            proposal_id: state.proposal_id ?? prev.proposal.proposal_id,
+            status: state.proposal_status,
+            blocked: state.proposal_status === 'blocked' ? true : prev.proposal.blocked,
+            decided_at: state.decided_at ?? prev.proposal.decided_at ?? null,
+          };
+        }
+        return next;
+      });
+    }
+    if (state.safety_latched) {
+      if (state.proposal_status === 'accepted' || state.proposal_status === 'rejected') {
+        setRemoteDecision({
+          session_id: targetSessionId,
+          status: state.proposal_status,
+          decided_at: state.decided_at,
+          recoverable: state.report_recoverable,
+        });
+      }
+      enterBlockedState();
+      setSafetySyncState('confirmed');
+      const eventId = safetyEventIdRef.current ?? 'server-latched';
+      if (
+        !writeStored(LOCAL_SAFETY_KEY, {
+          session_id: targetSessionId,
+          event_id: eventId,
+          server_confirmed: true,
+          safety_version: state.safety_version,
+        } satisfies StoredSafety)
+      )
+        noteStorageFault();
+      if (state.input_version != null && !reportRef.current && !state.report_recoverable) {
+        setAnalysisRecovery({
+          session_id: targetSessionId,
+          reason: 'lost',
+          serverInputVersion: state.input_version,
+          reportRecoverable: false,
+          nextInputVersion: state.input_version + 1,
+        });
+      }
+      return;
+    }
+    if (state.proposal_status === 'accepted' || state.proposal_status === 'rejected') {
+      // A committed decision is a fact; never show it as pending again and never
+      // allow an opposite decision to overwrite it.
+      setRemoteDecision({
+        session_id: targetSessionId,
+        status: state.proposal_status,
+        decided_at: state.decided_at,
+        recoverable: state.report_recoverable,
+      });
+      retireSessionStorage();
+      return;
+    }
+    if (state.input_version != null && !reportRef.current && !state.report_recoverable) {
+      // Analysis committed but the client has no report: keep the group blocked
+      // for new analyses on that version; a later analysis must use version+1.
+      setAnalysisRecovery({
+        session_id: targetSessionId,
+        reason: 'lost',
+        serverInputVersion: state.input_version,
+        reportRecoverable: false,
+        nextInputVersion: state.input_version + 1,
+      });
+      setError(
+        SAFETY_ANALYSIS_LOST_NOTICE +
+          ` 服务端 input_version=${state.input_version}，报告不可恢复；下次分析将使用 input_version=${state.input_version + 1}。`,
+      );
+    }
+  }
+  async function refreshSessionState(
+    targetSessionId: string,
+  ): Promise<'clear' | 'latched' | 'expired' | 'uninitialized' | 'unknown' | 'decided'> {
+    if (runtimeMode !== 'backend') return 'clear';
+    setChecking(true);
+    try {
+      const state = await getSessionState(targetSessionId);
+      stateUnknownRef.current = false;
+      setStateUnknown(false);
+      setUninitialized(false);
+      if (state.status === 'expired') {
+        expireCurrentSession(targetSessionId);
+        return 'expired';
+      }
+      adoptSessionState(targetSessionId, state);
+      if (state.safety_latched) return 'latched';
+      if (state.proposal_status === 'accepted' || state.proposal_status === 'rejected')
+        return 'decided';
+      return 'clear';
+    } catch (e) {
+      if (isApiError(e) && e.status === 404) {
+        // Known session id, unknown server session: fail-closed, never silently
+        // reuse the id. The user must explicitly discard the unrecoverable group.
+        stateUnknownRef.current = false;
+        setStateUnknown(false);
+        setUninitialized(true);
+        setError(SAFETY_SESSION_MISSING_NOTICE);
+        return 'uninitialized';
+      }
+      stateUnknownRef.current = true;
+      setStateUnknown(true);
+      setError(
+        isApiError(e) && e.status === 410 ? SAFETY_EXPIRED_NOTICE : SAFETY_STATE_UNKNOWN_NOTICE,
+      );
+      return 'unknown';
+    } finally {
+      setChecking(false);
+    }
+  }
+  async function syncSafetyEvent(eventId: string) {
+    if (runtimeMode !== 'backend') return;
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    setSafetySyncState('syncing');
+    try {
+      const receipt = await reportSafetyEvent(sessionId, eventId);
+      setSafetyVersionValue(receipt.safety_version);
+      setSafetySyncState('confirmed');
+      if (
+        !writeStored(LOCAL_SAFETY_KEY, {
+          session_id: sessionId,
+          event_id: eventId,
+          server_confirmed: true,
+          safety_version: receipt.safety_version,
+        } satisfies StoredSafety)
+      )
+        noteStorageFault();
+      // A first analysis may have been committed while its response was lost;
+      // reconcile against the authoritative input_version without guessing.
+      void reconcileLostAnalysis(sessionId);
+    } catch (e) {
+      if (isApiError(e) && e.status === 410) {
+        expireCurrentSession(sessionId);
+        return;
+      }
+      setSafetySyncState('pending');
+      setError(
+        isApiError(e) && e.status === 503 ? SAFETY_SYNC_PENDING_NOTICE : SAFETY_SYNC_FAILED_NOTICE,
+      );
+      if (
+        !writeStored(LOCAL_SAFETY_KEY, {
+          session_id: sessionId,
+          event_id: eventId,
+          server_confirmed: false,
+          safety_version: safetyVersion,
+        } satisfies StoredSafety)
+      )
+        noteStorageFault();
+    }
+  }
+  function retrySafetySync() {
+    if (safetyEventIdRef.current) void syncSafetyEvent(safetyEventIdRef.current);
+  }
+  function startNewSessionAfterExpiry() {
+    discomfortBlockedRef.current = false;
+    setDiscomfort(false);
+    setDiscomfortBlocked(false);
+    setUninitialized(false);
+    setRemoteDecision(null);
+    setReport(null);
+    setExplanation('');
+    setError('');
+    if (!beginSession()) setError(SAFETY_STORAGE_NOTICE);
+  }
+  async function reconcileLostAnalysis(targetSessionId: string) {
+    if (runtimeMode !== 'backend') return;
+    if (sessionIdRef.current !== targetSessionId) return;
+    try {
+      const state = await getSessionState(targetSessionId);
+      if (state.status === 'expired') return;
+      stateUnknownRef.current = false;
+      setStateUnknown(false);
+      adoptSessionState(targetSessionId, state);
+      if (state.input_version != null && !reportRef.current) {
+        const recovery: AnalysisRecovery = {
+          session_id: targetSessionId,
+          reason: 'lost',
+          serverInputVersion: state.input_version,
+          reportRecoverable: state.report_recoverable,
+          nextInputVersion: state.input_version + 1,
+        };
+        setAnalysisRecovery(recovery);
+        setError(
+          SAFETY_ANALYSIS_LOST_NOTICE +
+            ` 服务端 input_version=${state.input_version}；可点击「核对并恢复本组报告」。`,
+        );
+      }
+    } catch {
+      // Keep the local latch; stateUnknown/checking gates remain fail-closed.
+    }
+  }
+  async function handleDecisionError(error: unknown, target: Report) {
+    if (isApiError(error)) {
+      if (error.status === 409) {
+        const outcome = await refreshSessionState(target.session_id);
+        if (outcome === 'decided') {
+          setError('决定已在服务端提交（409）：已刷新权威状态，不能用相反决定覆盖已提交的事实。');
+        } else if (outcome === 'latched') {
+          setError('安全状态已变化（409）：本组已锁存，不能继续或提交决定。');
+        } else if (outcome === 'clear') {
+          setError(
+            '提案或安全状态已变化（409）：已刷新权威状态，请查看最新结果，不要自动重复不同决定。',
+          );
+        }
+        return;
+      }
+      if (error.status === 410) {
+        setError(SAFETY_EXPIRED_NOTICE);
+        setReport(null);
+        void refreshSessionState(target.session_id);
+        return;
+      }
+      if (error.status === 503) {
+        const outcome = await refreshSessionState(target.session_id);
+        if (outcome === 'decided') {
+          setError('服务端已提交该决定（503 后经核对确认）：已刷新，不能用相反决定覆盖。');
+        } else if (outcome !== 'unknown' && outcome !== 'uninitialized') {
+          setError(
+            '服务端未能确认该操作（503）：操作可能已经提交。已刷新状态核对；不能直接重复相反决定。',
+          );
+        }
+        return;
+      }
+    }
+    if (!discomfortBlockedRef.current) setError(String(error));
+  }
+  function discardUninitializedSession() {
+    if (storageFaultRef.current) {
+      setError(SAFETY_STORAGE_NOTICE);
+      return;
+    }
+    // Explicit user confirmation: the old local session/latch cannot be mapped to
+    // server state, so drop it and create a genuinely new session id.
+    const cleared = removeStored(ACTIVE_SESSION_KEY) && removeStored(LOCAL_SAFETY_KEY);
+    sessionIdRef.current = null;
+    safetyEventIdRef.current = null;
+    inputVersionRef.current = 1;
+    lastAnalyzeRef.current = null;
+    clearRecovery();
+    setRemoteDecision(null);
+    setUninitialized(false);
+    discomfortBlockedRef.current = false;
+    setDiscomfort(false);
+    setDiscomfortBlocked(false);
+    setSafetySyncState('idle');
+    setSafetyVersionValue(null);
+    stateUnknownRef.current = false;
+    setStateUnknown(false);
+    setReport(null);
+    setExplanation('');
+    if (!cleared) {
+      noteStorageFault();
+      return;
+    }
+    if (beginSession()) {
+      setError('已丢弃无法恢复的旧会话；新的训练组使用新的会话 ID。');
+    }
+  }
+  function buildAnalysisPayload(version: number): AnalysisPayload {
+    return {
+      session_id: sessionIdRef.current,
+      input_version: version,
+      exercise,
+      source: sourceMode,
+      reps: metricRef.current.reps,
+      active_seconds: live.current.elapsed,
+      observable_seconds: Math.min(live.current.observable, live.current.elapsed),
+      work_seconds: live.current.work,
+      rest_seconds: live.current.rest,
+      form_events: metricRef.current.events,
+      rep_details: exercise === 'squat' ? metricRef.current.squatReps : [],
+      fatigue,
+      discomfort: discomfortBlockedRef.current,
+      target_reps: target,
+      persist,
+      profile: {
+        weight_kg: weight,
+        height_cm: height,
+        age_years: age,
+        sex,
+        activity,
+        muscle_upper: muscleUpper,
+        muscle_core: muscleCore,
+        muscle_lower: muscleLower,
+        body_model: bodyModel,
+        experience: 'beginner',
+        goal: 'habit',
+      },
+    };
+  }
+  function applyAnalyzeResult(result: Report, payload: AnalysisPayload) {
+    const sentVersion = Number(payload.input_version);
+    lastAnalyzeRef.current = {
+      sessionId: result.session_id,
+      inputVersion: sentVersion,
+      payload,
+    };
+    inputVersionRef.current = result.input_version ?? sentVersion;
+    setAnalysisRecovery(null);
+    if (result.safety_version != null) setSafetyVersionValue(result.safety_version);
+    setReport(result);
+    setTab('report');
+    if (result.safety_latched || result.proposal.blocked) {
+      if (result.safety_latched) setSafetySyncState('confirmed');
+      enterBlockedState();
+    }
+    setError('');
+  }
+  async function prepareAnalysis(): Promise<{ version: number; payload: AnalysisPayload } | null> {
+    const sessionId = ensureSession();
+    if (!sessionId) return null;
+    if (runtimeMode !== 'backend') {
+      return { version: 1, payload: buildAnalysisPayload(1) };
+    }
+    let state: SessionState | null = null;
+    try {
+      state = await getSessionState(sessionId);
+    } catch (e) {
+      if (!(isApiError(e) && e.status === 404)) {
+        if (isApiError(e) && e.status === 410) {
+          setError(SAFETY_EXPIRED_NOTICE);
+        } else {
+          stateUnknownRef.current = true;
+          setStateUnknown(true);
+          setError(SAFETY_STATE_UNKNOWN_NOTICE + ' 本次分析未提交。');
+        }
+        return null;
+      }
+    }
+    if (state) {
+      if (state.status === 'expired') {
+        expireCurrentSession(sessionId);
+        return null;
+      }
+      adoptSessionState(sessionId, state);
+      if (state.proposal_status === 'accepted' || state.proposal_status === 'rejected') {
+        setError('本组决定已在服务端提交，不能再次分析或重复决定；请开始新的训练组。');
+        return null;
+      }
+      const last = lastAnalyzeRef.current;
+      if (last && last.sessionId === sessionId && state.input_version === last.inputVersion) {
+        // Exact replay of a response that was lost: same version, same content.
+        return { version: last.inputVersion, payload: last.payload };
+      }
+      const nextVersion = (state.input_version ?? 0) + 1;
+      if (state.input_version != null) {
+        setError(
+          `服务端已有 input_version=${state.input_version} 的本组分析；本次使用 input_version=${nextVersion}（不重复旧版本内容）。`,
+        );
+      }
+      return { version: nextVersion, payload: buildAnalysisPayload(nextVersion) };
+    }
+    // 404: no authoritative server session yet, so version 1 is the first analysis.
+    return { version: 1, payload: buildAnalysisPayload(1) };
+  }
+  async function recoverAnalysis() {
+    if (busy || finishInFlightRef.current) return;
+    if (sessionCheckingRef.current || storageFaultRef.current || uninitializedRef.current) {
+      setError(SAFETY_STATE_CHECKING_NOTICE);
+      return;
+    }
+    const sessionId = analysisRecovery?.session_id ?? sessionIdRef.current;
+    if (!sessionId) return;
+    setBusy(true);
+    setError('');
+    try {
+      let state: SessionState;
+      try {
+        state = await getSessionState(sessionId);
+      } catch (e) {
+        if (isApiError(e) && e.status === 404) {
+          setUninitialized(true);
+          setError(SAFETY_SESSION_MISSING_NOTICE);
+          return;
+        }
+        stateUnknownRef.current = true;
+        setStateUnknown(true);
+        setError(SAFETY_STATE_UNKNOWN_NOTICE);
+        return;
+      }
+      if (state.status === 'expired') {
+        expireCurrentSession(sessionId);
+        return;
+      }
+      adoptSessionState(sessionId, state);
+      if (state.proposal_status === 'accepted' || state.proposal_status === 'rejected') {
+        setError('本组决定已在服务端提交，不能重新分析；请开始新的训练组。');
+        return;
+      }
+      // 1) Prefer an exact replay when the server still has the same version and
+      //    we captured the exact payload (authoritative cached report view).
+      const last = lastAnalyzeRef.current;
+      if (
+        last &&
+        last.sessionId === sessionId &&
+        state.input_version != null &&
+        last.inputVersion === state.input_version
+      ) {
+        try {
+          const replay = await request<Report>('/sessions/analyze', {
+            method: 'POST',
+            body: JSON.stringify(last.payload),
+          });
+          applyAnalyzeResult(replay, last.payload);
+          return;
+        } catch (e) {
+          if (!(isApiError(e) && (e.status === 409 || e.status === 503))) throw e;
+          // Cached payload is gone; fall through to an explicit new version.
+        }
+      }
+      // 2) Explicit new analysis on the authoritative input_version + 1. This is
+      //    a new version, not a claimed idempotent retry of the old content.
+      const version = (state.input_version ?? 0) + 1;
+      const payload = buildAnalysisPayload(version);
+      const result = await request<Report>('/sessions/analyze', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      applyAnalyzeResult(result, payload);
+    } catch (e) {
+      if (isApiError(e) && (e.status === 409 || e.status === 503)) {
+        setError(
+          '恢复分析未能确认（' +
+            e.status +
+            '）：已保留安全阻断；请再次点击恢复或刷新页面核对，不会重复旧版本内容。',
+        );
+        void refreshSessionState(sessionId);
+      } else {
+        setError('恢复分析失败：' + String(e));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     live.current.source = sourceMode;
     if (sourceMode === 'simulation') {
-      stream.current?.getTracks().forEach((track) => track.stop());
-      stream.current = null;
-      if (video.current) {
-        video.current.srcObject = null;
-      }
+      releaseCamera();
       return;
     }
     points.current = [];
@@ -301,14 +1071,19 @@ export default function App() {
       navigator.mediaDevices
         .getUserMedia({ video: { facingMode: 'user', width: 1280, height: 720 }, audio: false })
         .then((s) => {
-          if (cancelled) {
+          if (cancelled || discomfortBlockedRef.current) {
             s.getTracks().forEach((t) => t.stop());
             return;
           }
           stream.current = s;
           if (video.current) {
             video.current.srcObject = s;
-            video.current.play().catch(() => setError('请允许浏览器播放摄像头画面。'));
+            video.current
+              .play()
+              .then(() => {
+                if (cancelled || discomfortBlockedRef.current) releaseCamera();
+              })
+              .catch(() => setError('请允许浏览器播放摄像头画面。'));
           }
         })
         .catch((e) => {
@@ -316,9 +1091,13 @@ export default function App() {
         });
       return () => {
         cancelled = true;
+        releaseCamera();
       };
     }
     attachVideo();
+    return () => {
+      releaseCamera();
+    };
   }, [sourceMode]);
 
   useEffect(() => {
@@ -454,7 +1233,96 @@ export default function App() {
     return () => cancelAnimationFrame(frame);
   }, [exercise]);
 
+  function reportDiscomfort() {
+    const wasBlocked = discomfortBlockedRef.current;
+    const existingReport = reportRef.current;
+    discomfortBlockedRef.current = true;
+    setDiscomfort(true);
+    setDiscomfortBlocked(true);
+    finishAbortRef.current?.abort();
+    finishAbortRef.current = null;
+    decisionAbortRef.current?.abort();
+    decisionAbortRef.current = null;
+    explanationTokenRef.current++;
+    explanationAbortRef.current?.abort();
+    explanationAbortRef.current = null;
+    live.current.running = false;
+    live.current.frameBusy = false;
+    generation.current++;
+    setRunning(false);
+    releaseCamera();
+    // An already generated report is never deleted here: it is historical
+    // evidence and the UI marks it as pre-latch. Only stale explanation text is
+    // cleared.
+    setExplanation('');
+    setError('');
+    if (runtimeMode === 'backend') {
+      // A discomfort belongs to the current group. After a committed decision the
+      // group id comes from the report so the already-submitted decision is kept.
+      const targetSession = sessionIdRef.current ?? existingReport?.session_id ?? null;
+      const sessionId = targetSession ?? ensureSession();
+      if (sessionId && !sessionIdRef.current) {
+        sessionIdRef.current = sessionId;
+        if (!writeStored(ACTIVE_SESSION_KEY, { session_id: sessionId })) noteStorageFault();
+      }
+      if (sessionId) {
+        if (!safetyEventIdRef.current) {
+          safetyEventIdRef.current = crypto.randomUUID();
+          if (
+            !writeStored(LOCAL_SAFETY_KEY, {
+              session_id: sessionId,
+              event_id: safetyEventIdRef.current,
+              server_confirmed: false,
+              safety_version: safetyVersion,
+            } satisfies StoredSafety)
+          )
+            noteStorageFault();
+        }
+        const report = existingReport;
+        if (report && report.proposal.status === 'pending') {
+          setAnalysisRecovery({
+            session_id: sessionId,
+            reason: 'pre-latch',
+            serverInputVersion: report.input_version,
+            reportRecoverable: false,
+            nextInputVersion: report.input_version + 1,
+          });
+          if (!wasBlocked) {
+            setError(
+              '已记录不适：本组报告生成于锁存之前，已作为历史证据失效，不能接受或拒绝；可重新生成阻断报告。',
+            );
+          }
+        }
+        void syncSafetyEvent(safetyEventIdRef.current);
+      }
+    }
+  }
   function reset() {
+    if (sessionCheckingRef.current) {
+      setError(SAFETY_STATE_CHECKING_NOTICE);
+      return;
+    }
+    if (storageFaultRef.current) {
+      setError(SAFETY_STORAGE_NOTICE);
+      return;
+    }
+    if (uninitializedRef.current) {
+      setError(SAFETY_SESSION_MISSING_NOTICE);
+      return;
+    }
+    if (stateUnknownRef.current) {
+      setError(SAFETY_STATE_UNKNOWN_NOTICE);
+      return;
+    }
+    if (discomfortBlockedRef.current) {
+      setError('本次训练已因不适停止，不能通过重置恢复本组；请结束本组查看阻断报告。');
+      return;
+    }
+    // Resetting after a report was generated discards the visible report: retire
+    // the session so the next analysis cannot reuse input_version=1 for it.
+    if (runtimeMode === 'backend' && sessionIdRef.current && reportRef.current) {
+      retireSessionStorage();
+    }
     recorder.current = new LandmarkRecorder();
     generation.current++;
     live.current.running = false;
@@ -488,12 +1356,44 @@ export default function App() {
     }
   }
   function chooseSource(next: SourceMode) {
+    if (sessionCheckingRef.current) {
+      setError(SAFETY_STATE_CHECKING_NOTICE);
+      return;
+    }
+    if (storageFaultRef.current) {
+      setError(SAFETY_STORAGE_NOTICE);
+      return;
+    }
+    if (uninitializedRef.current) {
+      setError(SAFETY_SESSION_MISSING_NOTICE);
+      return;
+    }
+    if (discomfortBlockedRef.current) {
+      setError('本次训练已因不适停止，不能通过切换输入源恢复本组。');
+      return;
+    }
     live.current.running = false;
     setRunning(false);
     setSourceMode(next);
     setError('');
   }
   function onVideoFile(file?: File) {
+    if (discomfortBlockedRef.current) {
+      setError('本次训练已因不适停止，不能通过上传视频恢复本组。');
+      return;
+    }
+    if (sessionCheckingRef.current) {
+      setError(SAFETY_STATE_CHECKING_NOTICE);
+      return;
+    }
+    if (storageFaultRef.current) {
+      setError(SAFETY_STORAGE_NOTICE);
+      return;
+    }
+    if (uninitializedRef.current) {
+      setError(SAFETY_SESSION_MISSING_NOTICE);
+      return;
+    }
     if (!file) return;
     reset();
     if (videoUrl.current) URL.revokeObjectURL(videoUrl.current);
@@ -505,9 +1405,30 @@ export default function App() {
     requestAnimationFrame(attachVideo);
   }
   async function toggleRunning() {
+    if (discomfortBlockedRef.current) {
+      setError('本次训练已因不适停止，不能开始、继续或恢复本组；请结束本组查看阻断报告。');
+      return;
+    }
+    if (sessionCheckingRef.current) {
+      setError(SAFETY_STATE_CHECKING_NOTICE);
+      return;
+    }
+    if (storageFaultRef.current) {
+      setError(SAFETY_STORAGE_NOTICE);
+      return;
+    }
+    if (uninitializedRef.current) {
+      setError(SAFETY_SESSION_MISSING_NOTICE);
+      return;
+    }
+    if (stateUnknownRef.current) {
+      setError(SAFETY_STATE_UNKNOWN_NOTICE);
+      return;
+    }
     if (!validSettings()) return;
     if (discomfort) {
-      setError('已报告不适，训练保持暂停。请结束本组查看报告。');
+      reportDiscomfort();
+      setError('已记录不适，训练保持停止；请结束本组查看阻断报告。');
       return;
     }
     if (sourceMode === 'video' && !videoUrl.current) {
@@ -520,10 +1441,18 @@ export default function App() {
           video: { facingMode: 'user', width: 1280, height: 720 },
           audio: false,
         });
+        if (discomfortBlockedRef.current) {
+          s.getTracks().forEach((track) => track.stop());
+          return;
+        }
         stream.current = s;
         if (video.current) {
           video.current.srcObject = s;
           await video.current.play();
+          if (discomfortBlockedRef.current) {
+            releaseCamera();
+            return;
+          }
         }
       } catch (e) {
         setError('无法打开摄像头：' + String(e));
@@ -538,6 +1467,13 @@ export default function App() {
         setError('无法播放所选视频，请换一个常见编码的文件。');
         return;
       }
+    }
+    if (!live.current.running && (!sessionIdRef.current || reportRef.current)) {
+      // A completed report/decision ends the previous group; the next group must
+      // use a fresh session id so the backend cannot see a version conflict.
+      if (!beginSession()) return;
+      setReport(null);
+      setExplanation('');
     }
     live.current.running = !live.current.running;
     engine.current.interrupt();
@@ -630,65 +1566,310 @@ export default function App() {
     }
   }
   async function finish() {
+    if (finishInFlightRef.current) return;
+    if (
+      report &&
+      (report.proposal.blocked ||
+        report.proposal.status === 'accepted' ||
+        report.proposal.status === 'rejected')
+    ) {
+      setTab('report');
+      setError(
+        report.proposal.blocked
+          ? '本次训练已因不适结束，已有报告或决定保留；不能通过重复结束创建新的报告。'
+          : '本组已结束并完成决定，不能重复结束；如需继续训练请开始新的训练组。',
+      );
+      return;
+    }
+    if (sessionCheckingRef.current) {
+      setError(SAFETY_STATE_CHECKING_NOTICE);
+      return;
+    }
+    if (storageFaultRef.current) {
+      setError(SAFETY_STORAGE_NOTICE);
+      return;
+    }
+    if (uninitializedRef.current) {
+      setError(SAFETY_SESSION_MISSING_NOTICE);
+      return;
+    }
+    if (stateUnknownRef.current) {
+      setError(SAFETY_STATE_UNKNOWN_NOTICE);
+      return;
+    }
+    finishInFlightRef.current = true;
     generation.current++;
     live.current.running = false;
     setRunning(false);
-    if (!validSettings()) return;
+    if (!validSettings()) {
+      finishInFlightRef.current = false;
+      return;
+    }
     setBusy(true);
     setError('');
+    const blockedAtRequest = discomfortBlockedRef.current;
+    const controller = new AbortController();
+    let attempt: { version: number; payload: AnalysisPayload } | null = null;
     try {
+      // Always consult the authoritative session state first: this chooses the
+      // next input_version and prevents same-version/different-content conflicts.
+      attempt = await prepareAnalysis();
+      if (!attempt) return;
+      // A latch that arrived while the state was being read must not be overridden
+      // by sending a normal (non-blocked) analysis.
+      if (discomfortBlockedRef.current !== blockedAtRequest) {
+        if (runtimeMode === 'backend' && sessionIdRef.current) {
+          void reconcileLostAnalysis(sessionIdRef.current);
+        }
+        return;
+      }
+      // Remember exactly what was sent so a lost response can be replayed with the
+      // same version and content instead of inventing a new version.
+      const sentSession = sessionIdRef.current;
+      if (sentSession) {
+        lastAnalyzeRef.current = {
+          sessionId: sentSession,
+          inputVersion: attempt.version,
+          payload: attempt.payload,
+        };
+      }
+      finishAbortRef.current = controller;
       const result = await request<Report>('/sessions/analyze', {
         method: 'POST',
-        body: JSON.stringify({
-          session_id: crypto.randomUUID(),
-          input_version: 1,
-          exercise,
-          source: sourceMode,
-          reps: metricRef.current.reps,
-          active_seconds: live.current.elapsed,
-          observable_seconds: Math.min(live.current.observable, live.current.elapsed),
-          work_seconds: live.current.work,
-          rest_seconds: live.current.rest,
-          form_events: metricRef.current.events,
-          rep_details: exercise === 'squat' ? metricRef.current.squatReps : [],
-          fatigue,
-          discomfort,
-          target_reps: target,
-          persist,
-          profile: {
-            weight_kg: weight,
-            height_cm: height,
-            age_years: age,
-            sex,
-            activity,
-            muscle_upper: muscleUpper,
-            muscle_core: muscleCore,
-            muscle_lower: muscleLower,
-            body_model: bodyModel,
-            experience: 'beginner',
-            goal: 'habit',
-          },
-        }),
+        signal: controller.signal,
+        body: JSON.stringify(attempt.payload),
       });
-      setReport(result);
-      setTab('report');
+      if (!blockedAtRequest && discomfortBlockedRef.current) {
+        setError('生成报告期间记录了不适：本组保持阻断，该结果不作为继续训练建议。');
+        setTab('training');
+        return;
+      }
+      if (discomfortBlockedRef.current && !result.proposal.blocked && !result.safety_latched) {
+        setError('生成报告期间记录了不适：本组保持阻断，不能使用该报告继续训练。');
+        setTab('training');
+        return;
+      }
+      applyAnalyzeResult(result, attempt.payload);
     } catch (e) {
+      if (controller.signal.aborted) {
+        // Aborted by a safety transition: do not assume the server failed to
+        // commit; reconcile once the latch/state is known.
+        if (runtimeMode === 'backend' && sessionIdRef.current) {
+          void reconcileLostAnalysis(sessionIdRef.current);
+        }
+        return;
+      }
+      if (isApiError(e) && e.status === 410) {
+        setError(SAFETY_EXPIRED_NOTICE + ' 本组报告未生成。');
+        if (sessionIdRef.current) void refreshSessionState(sessionIdRef.current);
+        return;
+      }
+      if (isApiError(e) && e.status === 409) {
+        const id = sessionIdRef.current;
+        if (id) {
+          const outcome = await refreshSessionState(id);
+          if (outcome === 'decided') {
+            setError('本组决定已在服务端提交（409）：不能重复分析或覆盖已提交的决定。');
+            return;
+          }
+          if (outcome === 'latched') {
+            setError('本组已锁存（409）：本次报告未生成，安全阻断仍然有效。');
+            return;
+          }
+          if (outcome === 'uninitialized' || outcome === 'unknown') return;
+        }
+        if (id) {
+          setAnalysisRecovery({
+            session_id: id,
+            reason: 'lost',
+            serverInputVersion: inputVersionRef.current,
+            reportRecoverable: false,
+            nextInputVersion: inputVersionRef.current + 1,
+          });
+        }
+        setError(
+          '本组分析版本冲突（409）：可能已有提交但报告不可恢复。不会重复相同版本内容；请点击「核对并恢复本组报告」。',
+        );
+        return;
+      }
+      if (isApiError(e) && e.status === 503) {
+        if (sessionIdRef.current) await refreshSessionState(sessionIdRef.current);
+        setError(
+          '服务端未能确认本次分析（503）：可能已保存，也可能未保存。已刷新状态核对；不会重复相同版本内容，请核对后再操作。',
+        );
+        return;
+      }
       setError(String(e));
+      if (runtimeMode === 'backend' && sessionIdRef.current) {
+        void refreshSessionState(sessionIdRef.current);
+      }
     } finally {
+      if (finishAbortRef.current === controller) finishAbortRef.current = null;
+      finishInFlightRef.current = false;
       setBusy(false);
     }
   }
+  function decisionGates(): string | null {
+    if (sessionCheckingRef.current) return SAFETY_STATE_CHECKING_NOTICE;
+    if (storageFaultRef.current) return SAFETY_STORAGE_NOTICE;
+    if (uninitializedRef.current) return SAFETY_SESSION_MISSING_NOTICE;
+    if (stateUnknownRef.current) return SAFETY_STATE_UNKNOWN_NOTICE;
+    return null;
+  }
   async function accept() {
     if (!report) return;
+    const gate = decisionGates();
+    if (gate) {
+      setError(gate);
+      return;
+    }
+    if (report.proposal.blocked || discomfortBlockedRef.current) {
+      setError('本次训练已因不适阻断，不能确认或应用下一组建议。');
+      return;
+    }
+    if (remoteDecision) {
+      setError('服务端已经提交本组决定，不能再次提交相反或重复决定。');
+      return;
+    }
     setBusy(true);
+    const controller = new AbortController();
+    decisionAbortRef.current = controller;
     try {
-      const next = await acceptReport(report);
+      const next = await acceptReport(report, controller.signal);
+      if (next.proposal.blocked || next.safety_latched) {
+        // The backend preserved/created authoritative safety state.
+        setReport(next);
+        if (next.proposal.status === 'accepted' || next.proposal.status === 'rejected') {
+          setRemoteDecision({
+            session_id: report.session_id,
+            status: next.proposal.status,
+            decided_at: next.proposal.decided_at ?? null,
+            recoverable: true,
+          });
+        }
+        enterBlockedState();
+        setError('本次训练已因不适阻断：已提交的决定保留，但不能继续训练。');
+        return;
+      }
+      if (controller.signal.aborted) return;
+      if (discomfortBlockedRef.current) {
+        setError('本次训练已因不适阻断，不能确认或应用下一组建议。');
+        return;
+      }
+      if (next.safety_version != null) setSafetyVersionValue(next.safety_version);
+      if (next.input_version != null) inputVersionRef.current = next.input_version;
       setReport(next);
       setTarget(next.proposal.target_reps);
+      completeSession();
     } catch (e) {
+      if (!controller.signal.aborted) void handleDecisionError(e, report);
+    } finally {
+      if (decisionAbortRef.current === controller) decisionAbortRef.current = null;
+      setBusy(false);
+    }
+  }
+  async function reject() {
+    if (!report) return;
+    const gate = decisionGates();
+    if (gate) {
+      setError(gate);
+      return;
+    }
+    if (report.proposal.blocked || discomfortBlockedRef.current) {
+      setError('本次训练已因不适阻断，不能确认或拒绝下一组建议。');
+      return;
+    }
+    if (remoteDecision) {
+      setError('服务端已经提交本组决定，不能再次提交相反或重复决定。');
+      return;
+    }
+    setBusy(true);
+    const controller = new AbortController();
+    decisionAbortRef.current = controller;
+    try {
+      const next = await decideReport(report, 'reject', controller.signal);
+      if (next.proposal.blocked || next.safety_latched) {
+        setReport(next);
+        if (next.proposal.status === 'accepted' || next.proposal.status === 'rejected') {
+          setRemoteDecision({
+            session_id: report.session_id,
+            status: next.proposal.status,
+            decided_at: next.proposal.decided_at ?? null,
+            recoverable: true,
+          });
+        }
+        enterBlockedState();
+        setError('本次训练已因不适阻断：已提交的决定保留，但不能继续训练。');
+        return;
+      }
+      if (controller.signal.aborted) return;
+      if (discomfortBlockedRef.current) {
+        setError('本次训练已因不适阻断，不能确认或拒绝下一组建议。');
+        return;
+      }
+      if (next.safety_version != null) setSafetyVersionValue(next.safety_version);
+      if (next.input_version != null) inputVersionRef.current = next.input_version;
+      setReport(next);
+      completeSession();
+    } catch (e) {
+      if (!controller.signal.aborted) void handleDecisionError(e, report);
+    } finally {
+      if (decisionAbortRef.current === controller) decisionAbortRef.current = null;
+      setBusy(false);
+    }
+  }
+  async function loadExplanation() {
+    if (!report) return;
+    const gate = decisionGates();
+    if (gate) {
+      setError(gate);
+      return;
+    }
+    if (report.proposal.blocked || discomfortBlockedRef.current) {
+      setError('本次训练已因不适阻断，不能继续使用旧的解释建议。');
+      return;
+    }
+    const requestSession = report.session_id;
+    const requestVersion = report.input_version;
+    const token = ++explanationTokenRef.current;
+    const controller = new AbortController();
+    explanationAbortRef.current = controller;
+    const stale = () =>
+      controller.signal.aborted ||
+      token !== explanationTokenRef.current ||
+      discomfortBlockedRef.current ||
+      reportRef.current?.session_id !== requestSession ||
+      reportRef.current?.input_version !== requestVersion;
+    try {
+      const r = await request<ExplanationResponse>(
+        `/sessions/${encodeURIComponent(requestSession)}/explanation`,
+        { method: 'POST', signal: controller.signal },
+      );
+      if (stale()) return;
+      if (r.blocked || r.safety_latched) {
+        setExplanation(r.text);
+        enterBlockedState();
+        setError('服务端已锁存：解释已被安全阻断内容替换，不能作为继续训练建议。');
+        return;
+      }
+      if (r.safety_version != null) setSafetyVersionValue(r.safety_version);
+      setExplanation(r.text + '（' + r.runtime + '）');
+    } catch (e) {
+      if (stale()) return;
+      if (isApiError(e) && e.status === 410) {
+        setError(SAFETY_EXPIRED_NOTICE);
+        setReport(null);
+        void refreshSessionState(requestSession);
+        return;
+      }
+      if (isApiError(e) && e.status === 409) {
+        setError('服务端安全状态或报告已变化（409）：已刷新权威状态，请勿继续使用旧解释。');
+        void refreshSessionState(requestSession);
+        return;
+      }
       setError(String(e));
     } finally {
-      setBusy(false);
+      if (explanationAbortRef.current === controller) explanationAbortRef.current = null;
     }
   }
   function validSettings() {
@@ -765,6 +1946,11 @@ export default function App() {
     sourceMode === 'simulation' ||
     (sourceMode === 'video' && Boolean(videoUrl.current || videoName)) ||
     sourceMode === 'camera';
+  const reportFinished =
+    report !== null &&
+    (report.proposal.blocked ||
+      report.proposal.status === 'accepted' ||
+      report.proposal.status === 'rejected');
 
   return (
     <div className="layout">
@@ -830,6 +2016,114 @@ export default function App() {
             {error}
           </div>
         )}
+        {discomfortBlocked && (
+          <div role="alert" className="alert safety-stop">
+            <strong>
+              {report?.proposal.blocked ? '本次训练已因不适结束。' : '本次训练已因不适停止。'}
+            </strong>{' '}
+            {report?.proposal.blocked
+              ? '阻断报告已生成，不能确认或应用下一组建议。'
+              : report?.proposal.status === 'accepted' || report?.proposal.status === 'rejected'
+                ? '此前已提交的计划决定仍保留在复盘记录中，但不会继续训练。'
+                : SAFETY_STOP_NOTICE}
+            {runtimeMode === 'backend' && (
+              <div className="safety-sync">
+                {safetySync === 'syncing' && <p role="status">正在向服务端同步本次不适事件…</p>}
+                {safetySync === 'pending' && (
+                  <>
+                    <p role="status">{SAFETY_SYNC_PENDING_NOTICE}</p>
+                    <button className="secondary" onClick={retrySafetySync}>
+                      重试服务端同步（同一事件 ID）
+                    </button>
+                  </>
+                )}
+                {safetySync === 'confirmed' && (
+                  <p role="status">
+                    服务端已确认记录本次不适事件（safety_version {safetyVersion ?? '-'}）。
+                  </p>
+                )}
+                {safetySync === 'expired' && (
+                  <>
+                    <p role="status">{SAFETY_EXPIRED_NOTICE}</p>
+                    <button className="secondary" onClick={startNewSessionAfterExpiry}>
+                      开始新的训练组
+                    </button>
+                  </>
+                )}
+                {safetySync === 'idle' && <p role="status">本地已阻断；服务端同步尚未开始。</p>}
+              </div>
+            )}
+          </div>
+        )}
+        {stateUnknown && (
+          <div role="alert" className="alert safety-stop">
+            <strong>服务端安全状态未确认</strong> {SAFETY_STATE_UNKNOWN_NOTICE}
+            <button
+              className="secondary"
+              onClick={() => {
+                if (sessionIdRef.current) void refreshSessionState(sessionIdRef.current);
+              }}
+            >
+              重试状态查询
+            </button>
+          </div>
+        )}
+        {runtimeMode === 'backend' && sessionChecking && (
+          <div role="status" className="alert safety-stop">
+            <strong>正在核对服务端会话状态</strong> {SAFETY_STATE_CHECKING_NOTICE}
+          </div>
+        )}
+        {runtimeMode === 'backend' && storageFault && (
+          <div role="alert" className="alert safety-stop">
+            <strong>浏览器存储不可用</strong> {SAFETY_STORAGE_NOTICE}
+          </div>
+        )}
+        {runtimeMode === 'backend' && sessionUninitialized && (
+          <div role="alert" className="alert safety-stop">
+            <strong>会话无法恢复</strong> {SAFETY_SESSION_MISSING_NOTICE}
+            <div className="inline-actions">
+              <button
+                className="secondary"
+                onClick={() => {
+                  const sessionId = sessionIdRef.current;
+                  if (sessionId) void refreshSessionState(sessionId);
+                }}
+              >
+                重试状态查询
+              </button>
+              <button className="secondary danger" onClick={discardUninitializedSession}>
+                丢弃本组并创建新会话
+              </button>
+            </div>
+          </div>
+        )}
+        {runtimeMode === 'backend' && analysisRecovery && !sessionChecking && (
+          <div role="alert" className="alert safety-stop">
+            <strong>
+              {analysisRecovery.reason === 'pre-latch'
+                ? '本组报告生成于安全锁存之前'
+                : '分析提交状态待核对'}
+            </strong>{' '}
+            {analysisRecovery.reason === 'pre-latch'
+              ? '该报告已作为历史证据失效，不能接受或拒绝；服务端安全阻断仍然有效。'
+              : SAFETY_ANALYSIS_LOST_NOTICE}
+            <div className="inline-actions">
+              <button className="secondary" disabled={busy} onClick={() => void recoverAnalysis()}>
+                核对并恢复本组报告
+              </button>
+            </div>
+          </div>
+        )}
+        {runtimeMode === 'backend' && remoteDecision && (
+          <div role="status" className="alert safety-stop">
+            <strong>服务端已提交本组决定</strong>{' '}
+            {remoteDecision.status === 'accepted' ? '接受' : '拒绝'}
+            {remoteDecision.decided_at ? `（${remoteDecision.decided_at}）` : ''}
+            ：该决定是已提交事实，不能用相反决定覆盖；
+            {!report && !remoteDecision.recoverable ? '本页报告不可恢复，仅保留该决定事实；' : ''}
+            如需继续训练请开始新的训练组。
+          </div>
+        )}
         <div className="panel" style={{ marginBottom: 20 }}>
           <strong>
             {runtimeMode === 'browser'
@@ -864,21 +2158,42 @@ export default function App() {
             </div>
             <div className="segmented">
               <button
-                disabled={running || busy}
+                disabled={
+                  running ||
+                  busy ||
+                  discomfortBlocked ||
+                  sessionChecking ||
+                  storageFault ||
+                  sessionUninitialized
+                }
                 className={sourceMode === 'simulation' ? 'selected' : ''}
                 onClick={() => chooseSource('simulation')}
               >
                 模拟演示
               </button>
               <button
-                disabled={running || busy}
+                disabled={
+                  running ||
+                  busy ||
+                  discomfortBlocked ||
+                  sessionChecking ||
+                  storageFault ||
+                  sessionUninitialized
+                }
                 className={sourceMode === 'camera' ? 'selected' : ''}
                 onClick={() => chooseSource('camera')}
               >
                 真实摄像头
               </button>
               <button
-                disabled={running || busy}
+                disabled={
+                  running ||
+                  busy ||
+                  discomfortBlocked ||
+                  sessionChecking ||
+                  storageFault ||
+                  sessionUninitialized
+                }
                 className={sourceMode === 'video' ? 'selected' : ''}
                 onClick={() => fileInput.current?.click()}
               >
@@ -952,7 +2267,14 @@ export default function App() {
               <label className="checkbox">
                 <input
                   type="checkbox"
-                  disabled={running || busy}
+                  disabled={
+                    running ||
+                    busy ||
+                    discomfortBlocked ||
+                    sessionChecking ||
+                    storageFault ||
+                    sessionUninitialized
+                  }
                   checked={showExperimental}
                   onChange={(e) => {
                     setShowExperimental(e.target.checked);
@@ -965,13 +2287,27 @@ export default function App() {
               <input
                 id="exercise-search"
                 placeholder="搜索动作，如 深蹲 / 俯卧撑 / 波比"
-                disabled={running || busy}
+                disabled={
+                  running ||
+                  busy ||
+                  discomfortBlocked ||
+                  sessionChecking ||
+                  storageFault ||
+                  sessionUninitialized
+                }
                 value={exerciseQuery}
                 onChange={(e) => setExerciseQuery(e.target.value)}
               />
               <select
                 id="exercise"
-                disabled={running || busy}
+                disabled={
+                  running ||
+                  busy ||
+                  discomfortBlocked ||
+                  sessionChecking ||
+                  storageFault ||
+                  sessionUninitialized
+                }
                 value={exercise}
                 onChange={(e) => {
                   if (isExercise(e.target.value)) setExercise(e.target.value);
@@ -1038,16 +2374,42 @@ export default function App() {
               <div className="controls">
                 <button
                   className="primary"
-                  disabled={busy || !canStart}
+                  disabled={
+                    busy ||
+                    !canStart ||
+                    discomfortBlocked ||
+                    stateUnknown ||
+                    sessionChecking ||
+                    storageFault ||
+                    sessionUninitialized
+                  }
                   onClick={() => void toggleRunning()}
                 >
                   {running ? <Pause size={17} /> : <Play size={17} />}{' '}
-                  {running ? '暂停' : '开始 / 继续'}
+                  {storageFault
+                    ? '存储不可用'
+                    : sessionChecking
+                      ? '正在核对状态…'
+                      : sessionUninitialized
+                        ? '会话待处理'
+                        : stateUnknown
+                          ? '状态未确认'
+                          : discomfortBlocked
+                            ? '本次训练已停止'
+                            : running
+                              ? '暂停'
+                              : '开始 / 继续'}
                 </button>
                 <button
                   className="icon-button"
                   aria-label="重置本组"
-                  disabled={busy}
+                  disabled={
+                    busy ||
+                    discomfortBlocked ||
+                    sessionChecking ||
+                    storageFault ||
+                    sessionUninitialized
+                  }
                   onClick={reset}
                 >
                   <RotateCcw size={18} />
@@ -1055,14 +2417,38 @@ export default function App() {
                 <button
                   className="icon-button"
                   aria-label="上传视频"
-                  disabled={busy || running}
+                  disabled={
+                    busy ||
+                    running ||
+                    discomfortBlocked ||
+                    sessionChecking ||
+                    storageFault ||
+                    sessionUninitialized
+                  }
                   onClick={() => fileInput.current?.click()}
                 >
                   <Upload size={18} />
                 </button>
               </div>
-              <button className="finish-button" disabled={busy} onClick={finish}>
-                {busy ? '生成报告中…' : '结束本组并复盘'}
+              <button
+                className="finish-button"
+                disabled={
+                  busy ||
+                  reportFinished ||
+                  sessionChecking ||
+                  storageFault ||
+                  sessionUninitialized ||
+                  stateUnknown
+                }
+                onClick={finish}
+              >
+                {busy
+                  ? '生成报告中…'
+                  : reportFinished
+                    ? '本次训练已结束'
+                    : sessionChecking
+                      ? '正在核对状态…'
+                      : '结束本组并复盘'}
                 <ArrowRight size={17} />
               </button>
               {(exercise === 'squat' || exercise === 'jumping_jack') &&
@@ -1243,7 +2629,14 @@ export default function App() {
                     type="number"
                     min="1"
                     max="100"
-                    disabled={running || busy}
+                    disabled={
+                      running ||
+                      busy ||
+                      discomfortBlocked ||
+                      sessionChecking ||
+                      storageFault ||
+                      sessionUninitialized
+                    }
                     value={target}
                     onChange={(e) => setTarget(Number(e.target.value))}
                   />
@@ -1269,7 +2662,14 @@ export default function App() {
                     type="range"
                     min="85"
                     max="125"
-                    disabled={running || busy}
+                    disabled={
+                      running ||
+                      busy ||
+                      discomfortBlocked ||
+                      sessionChecking ||
+                      storageFault ||
+                      sessionUninitialized
+                    }
                     value={threshold}
                     onChange={(e) => setThreshold(Number(e.target.value))}
                   />
@@ -1294,15 +2694,20 @@ export default function App() {
                   type="checkbox"
                   checked={discomfort}
                   onChange={(e) => {
-                    setDiscomfort(e.target.checked);
                     if (e.target.checked) {
-                      live.current.running = false;
-                      setRunning(false);
+                      reportDiscomfort();
+                    } else {
+                      setDiscomfort(false);
                     }
                   }}
                 />
-                我有不适，需要停止
+                {discomfortBlocked ? '我已报告不适（本次训练已停止）' : '我有不适，需要停止'}
               </label>
+              {discomfortBlocked && (
+                <p className="safety-block-note">
+                  取消勾选只改变本复选框，不会解除本次训练阻断；本页没有自动开始下一组。
+                </p>
+              )}
               <label className="checkbox">
                 <input
                   type="checkbox"
@@ -1422,10 +2827,28 @@ export default function App() {
                       </span>
                     </div>
                     <p>{report.proposal.reason}</p>
+                    {discomfortBlocked && !report.proposal.blocked && (
+                      <p role="alert" className="safety-block-note">
+                        本报告生成于安全锁存之前（历史证据），已失效：不能据此确认/拒绝或继续训练。服务端安全阻断仍然有效。
+                      </p>
+                    )}
+                    {report.proposal.blocked && (
+                      <p role="alert" className="safety-block-note">
+                        本次报告为不适阻断记录：不会生成或应用下一组建议，也不能通过重复结束或接受提案解除阻断。
+                      </p>
+                    )}
                     <button
                       className="primary"
                       disabled={
-                        busy || report.proposal.blocked || report.proposal.status !== 'pending'
+                        busy ||
+                        report.proposal.blocked ||
+                        report.proposal.status !== 'pending' ||
+                        discomfortBlocked ||
+                        stateUnknown ||
+                        sessionChecking ||
+                        storageFault ||
+                        sessionUninitialized ||
+                        remoteDecision !== null
                       }
                       onClick={accept}
                     >
@@ -1439,51 +2862,58 @@ export default function App() {
                     <button
                       className="secondary"
                       disabled={
-                        busy || report.proposal.blocked || report.proposal.status !== 'pending'
+                        busy ||
+                        report.proposal.blocked ||
+                        report.proposal.status !== 'pending' ||
+                        discomfortBlocked ||
+                        stateUnknown ||
+                        sessionChecking ||
+                        storageFault ||
+                        sessionUninitialized ||
+                        remoteDecision !== null
                       }
-                      onClick={async () => {
-                        if (!report) return;
-                        setBusy(true);
-                        try {
-                          setReport(await decideReport(report, 'reject'));
-                        } catch (e) {
-                          setError(String(e));
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
+                      onClick={() => void reject()}
                     >
                       拒绝调整，保持原计划
                     </button>
                     <button
                       className="finish-button"
-                      onClick={async () => {
-                        try {
-                          const r = await request<{ text: string; runtime: string }>(
-                            `/sessions/${report.session_id}/explanation`,
-                            { method: 'POST' },
-                          );
-                          setExplanation(r.text + '（' + r.runtime + '）');
-                        } catch (e) {
-                          setError(String(e));
-                        }
-                      }}
+                      disabled={
+                        discomfortBlocked ||
+                        stateUnknown ||
+                        sessionChecking ||
+                        storageFault ||
+                        sessionUninitialized
+                      }
+                      onClick={() => void loadExplanation()}
                     >
                       查看解释
                       <ArrowRight size={16} />
                     </button>
                     {explanation && <p>{explanation}</p>}
+                    {report.safety_latched && (
+                      <p role="status" className="muted">
+                        实时报告以服务端安全状态为准（safety_version {report.safety_version ?? '-'}
+                        ）；历史快照不会改写。
+                      </p>
+                    )}
                   </section>
                   <section className="panel">
                     <h3>教练协作记录</h3>
                     <p className="muted">结构化结果与依据 · 规则节点执行</p>
                     <div className="trace">
                       {report.trace.map((step, i) => (
-                        <details key={step.role}>
+                        <details key={`${step.role}-${i}`}>
                           <summary>
                             <span className="step-number">{i + 1}</span>
-                            <strong>{roleNames[step.role]}</strong>
-                            <span className="trace-state">完成</span>
+                            <strong>{roleNames[step.role] ?? step.role}</strong>
+                            <span className="trace-state">
+                              {step.pre_latch
+                                ? '锁存前记录（历史）'
+                                : step.historical === false
+                                  ? '当前安全阻断'
+                                  : '完成'}
+                            </span>
                           </summary>
                           <p>{step.decision}</p>
                           <pre>{JSON.stringify(step.evidence, null, 2)}</pre>
@@ -1527,6 +2957,22 @@ export default function App() {
                       setHistory([]);
                       setReport(null);
                       setExplanation('');
+                      if (runtimeMode === 'backend') {
+                        if (discomfortBlockedRef.current) {
+                          // The latch is a separate safety layer and survives the
+                          // user history deletion; only the report payload is gone.
+                          setAnalysisRecovery(null);
+                          if (sessionIdRef.current) {
+                            void refreshSessionState(sessionIdRef.current);
+                          }
+                          setError('历史摘要已删除；本次训练的本地安全阻断仍然有效。');
+                        } else if (sessionIdRef.current) {
+                          // The discarded report belonged to this session; retire it
+                          // so the next analysis uses a fresh session/version.
+                          retireSessionStorage();
+                          setError('历史摘要已删除；本组会话已结束，下次训练将使用新的会话 ID。');
+                        }
+                      }
                     } catch (e) {
                       setError(String(e));
                     }
@@ -1536,11 +2982,15 @@ export default function App() {
                   删除全部本机摘要
                 </button>
               </div>
+              <p className="muted">
+                历史是存档快照，不代表当前可执行计划；当前会话请以复盘页的实时报告和安全状态为准。
+              </p>
               {history.map((r) => (
                 <div className="history-row" key={r.session_id}>
                   <span>
                     {r.source === 'simulation' ? '模拟' : r.source === 'video' ? '视频' : '摄像头'}{' '}
                     · {r.session_id.slice(0, 8)}
+                    {r.safety_latched || r.proposal.blocked ? ' · 已锁存（历史）' : ' · 历史快照'}
                   </span>
                   <span>
                     完成度 {Math.round(r.completion * 100)}% · {r.proposal.reason}
