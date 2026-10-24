@@ -50,6 +50,14 @@ class LeaseNotHeld(AutopilotError):
     """A scheduler tried to claim work without holding the global lease."""
 
 
+class LeaseLost(AutopilotError):
+    """A worker's lease generation/fence is no longer current."""
+
+
+class StaleClaim(AutopilotError):
+    """A worker tried to mutate a task claimed by a newer attempt."""
+
+
 class InvalidTransition(AutopilotError):
     """A state transition was not allowed by the state machine."""
 
@@ -100,6 +108,7 @@ class TaskRecord:
     branch: str | None
     created_at: float
     updated_at: float
+    claim_token: str | None = None
 
 
 @dataclass(frozen=True)

@@ -24,10 +24,18 @@ class RestartRecoveryTest(unittest.TestCase):
         clock = FakeClock()
         store = SqliteStore(self.db_path)
         store.enqueue_task(task("T1"), clock())
-        self.assertTrue(store.acquire_lease("crasher", 60.0, clock()))
-        claimed = store.claim_next("crasher", clock())
+        fence = store.acquire_lease("crasher", 60.0, clock())
+        self.assertIsNotNone(fence)
+        claimed = store.claim_next("crasher", clock(), fence)
         self.assertIsNotNone(claimed)
-        store.record_execution_result("T1", "t1-head", "committed before crash", clock())
+        store.record_execution_result(
+            "T1",
+            "t1-head",
+            "committed before crash",
+            clock(),
+            fence=fence,
+            claim_token=claimed.claim_token,
+        )
         store.close()
 
         clock.advance(61.0)
@@ -59,8 +67,9 @@ class RestartRecoveryTest(unittest.TestCase):
         clock = FakeClock()
         store = SqliteStore(self.db_path)
         store.enqueue_task(task("T1"), clock())
-        self.assertTrue(store.acquire_lease("crasher", 60.0, clock()))
-        self.assertIsNotNone(store.claim_next("crasher", clock()))
+        fence = store.acquire_lease("crasher", 60.0, clock())
+        self.assertIsNotNone(fence)
+        self.assertIsNotNone(store.claim_next("crasher", clock(), fence))
         store.close()
 
         clock.advance(61.0)
@@ -93,7 +102,8 @@ class RestartRecoveryTest(unittest.TestCase):
         self.addCleanup(owner_store.close)
         self.addCleanup(other_store.close)
         owner_store.enqueue_task(task("T1"), clock())
-        self.assertTrue(owner_store.acquire_lease("owner-a", 60.0, clock()))
+        fence = owner_store.acquire_lease("owner-a", 60.0, clock())
+        self.assertIsNotNone(fence)
 
         counts = other_store.recover(clock())
         self.assertEqual(counts["lease_cleared"], 0)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -16,10 +17,12 @@ from typing import Any, Iterator
 from .models import (
     ALLOWED_TRANSITIONS,
     InvalidTransition,
+    LeaseLost,
     LeaseNotHeld,
     ReviewOutcome,
     ReviewResult,
     ReviewVerdict,
+    StaleClaim,
     TaskRecord,
     TaskSpec,
     TaskStatus,
@@ -41,14 +44,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_error TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    claimed_at REAL
+    claimed_at REAL,
+    attempt_has_result INTEGER NOT NULL DEFAULT 0,
+    claim_token TEXT
 );
 
 CREATE TABLE IF NOT EXISTS lease (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     owner TEXT,
     acquired_at REAL,
-    expires_at REAL
+    expires_at REAL,
+    generation INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO lease (singleton, owner, acquired_at, expires_at)
 VALUES (1, NULL, NULL, NULL);
@@ -117,6 +123,18 @@ class SqliteStore:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._ensure_column("tasks", "attempt_has_result", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("tasks", "claim_token", "TEXT")
+        self._ensure_column("lease", "generation", "INTEGER NOT NULL DEFAULT 0")
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        """Small forward migration for databases created by Phase 1A.0."""
+        columns = {
+            row["name"]
+            for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     # ------------------------------------------------------------------ basics
     @contextmanager
@@ -154,6 +172,7 @@ class SqliteStore:
             branch=row["branch"],
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
+            claim_token=row["claim_token"],
         )
 
     def get_task(self, task_id: str) -> TaskRecord | None:
@@ -242,58 +261,89 @@ class SqliteStore:
             "owner": row["owner"],
             "acquired_at": row["acquired_at"],
             "expires_at": row["expires_at"],
+            "generation": row["generation"],
         }
 
-    def acquire_lease(self, owner: str, ttl_seconds: float, now: float) -> bool:
+    def acquire_lease(self, owner: str, ttl_seconds: float, now: float) -> int | None:
+        """Acquire the singleton lease and return its new fencing generation."""
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be > 0")
         with self.transaction():
             row = self.conn.execute(
-                "SELECT owner, expires_at FROM lease WHERE singleton = 1"
+                "SELECT owner, expires_at, generation FROM lease WHERE singleton = 1"
             ).fetchone()
             if row is None:
                 self.conn.execute(
-                    "INSERT INTO lease (singleton, owner, acquired_at, expires_at) "
-                    "VALUES (1, NULL, NULL, NULL)"
+                    "INSERT INTO lease "
+                    "(singleton, owner, acquired_at, expires_at, generation) "
+                    "VALUES (1, NULL, NULL, NULL, 0)"
                 )
-                row = {"owner": None, "expires_at": None}
+                row = {"owner": None, "expires_at": None, "generation": 0}
             current_owner = row["owner"]
             expires_at = row["expires_at"]
             if current_owner and expires_at is not None and float(expires_at) > now:
-                return False
+                return None
+            generation = int(row["generation"] or 0) + 1
             self.conn.execute(
-                "UPDATE lease SET owner = ?, acquired_at = ?, expires_at = ? "
-                "WHERE singleton = 1",
-                (owner, now, now + ttl_seconds),
+                "UPDATE lease SET owner = ?, acquired_at = ?, expires_at = ?, "
+                "generation = ? WHERE singleton = 1",
+                (owner, now, now + ttl_seconds, generation),
             )
-            return True
+            return generation
 
-    def renew_lease(self, owner: str, ttl_seconds: float, now: float) -> bool:
+    def renew_lease(
+        self, owner: str, ttl_seconds: float, now: float, fence: int
+    ) -> bool:
         with self.transaction():
             row = self.conn.execute(
-                "SELECT owner, expires_at FROM lease WHERE singleton = 1"
+                "SELECT owner, expires_at, generation FROM lease WHERE singleton = 1"
             ).fetchone()
             if (
                 row is None
                 or row["owner"] != owner
+                or int(row["generation"] or 0) != int(fence)
                 or row["expires_at"] is None
                 or float(row["expires_at"]) <= now
             ):
                 return False
             self.conn.execute(
-                "UPDATE lease SET expires_at = ? WHERE singleton = 1 AND owner = ?",
-                (now + ttl_seconds, owner),
+                "UPDATE lease SET expires_at = ? "
+                "WHERE singleton = 1 AND owner = ? AND generation = ?",
+                (now + ttl_seconds, owner, int(fence)),
             )
             return True
 
-    def release_lease(self, owner: str) -> bool:
+    def release_lease(self, owner: str, fence: int | None = None) -> bool:
         with self.transaction():
+            row = self.conn.execute(
+                "SELECT owner, generation FROM lease WHERE singleton = 1"
+            ).fetchone()
+            if row is None or row["owner"] != owner:
+                return False
+            if fence is not None and int(row["generation"] or 0) != int(fence):
+                return False
             cursor = self.conn.execute(
                 "UPDATE lease SET owner = NULL, acquired_at = NULL, expires_at = NULL "
                 "WHERE singleton = 1 AND owner = ?",
                 (owner,),
             )
             return cursor.rowcount == 1
+
+    def _require_fence(self, fence: int, now: float) -> None:
+        """Reject a worker whose lease generation is stale or expired."""
+        row = self.conn.execute(
+            "SELECT owner, expires_at, generation FROM lease WHERE singleton = 1"
+        ).fetchone()
+        if (
+            row is None
+            or row["owner"] is None
+            or int(row["generation"] or 0) != int(fence)
+            or row["expires_at"] is None
+            or float(row["expires_at"]) <= now
+        ):
+            raise LeaseLost(
+                "lease generation is stale or expired; result must be discarded"
+            )
 
     # -------------------------------------------------------- state machine
     def _log_transition(
@@ -343,19 +393,22 @@ class SqliteStore:
             )
             return self._to_record(self._task_row(task_id))  # type: ignore[arg-type]
 
-    def claim_next(self, owner: str, now: float) -> TaskRecord | None:
-        """Claim the oldest ready/changes-requested task while holding the lease."""
+    def claim_next(self, owner: str, now: float, fence: int) -> TaskRecord | None:
+        """Claim a task while holding the current lease generation."""
         with self.transaction():
             lease = self.conn.execute(
-                "SELECT owner, expires_at FROM lease WHERE singleton = 1"
+                "SELECT owner, expires_at, generation FROM lease WHERE singleton = 1"
             ).fetchone()
             if (
                 lease is None
                 or lease["owner"] != owner
+                or int(lease["generation"] or 0) != int(fence)
                 or lease["expires_at"] is None
                 or float(lease["expires_at"]) <= now
             ):
-                raise LeaseNotHeld("claim_next requires an unexpired global lease")
+                raise LeaseLost(
+                    "claim_next requires the current unexpired lease generation"
+                )
 
             row = self.conn.execute(
                 """
@@ -370,10 +423,12 @@ class SqliteStore:
                 return None
 
             attempt = int(row["attempts"]) + 1
+            claim_token = uuid.uuid4().hex
             self.conn.execute(
                 """
                 UPDATE tasks
-                SET status = ?, attempts = ?, claimed_at = ?, updated_at = ?
+                SET status = ?, attempts = ?, claimed_at = ?, updated_at = ?,
+                    attempt_has_result = 0, claim_token = ?
                 WHERE task_id = ? AND status = ?
                 """,
                 (
@@ -381,6 +436,7 @@ class SqliteStore:
                     attempt,
                     now,
                     now,
+                    claim_token,
                     row["task_id"],
                     row["status"],
                 ),
@@ -395,12 +451,28 @@ class SqliteStore:
             )
             return self._to_record(self._task_row(row["task_id"]))  # type: ignore[arg-type]
 
+    def _require_claim(
+        self, row: sqlite3.Row, claim_token: str | None
+    ) -> None:
+        if not claim_token or row["claim_token"] != claim_token:
+            raise StaleClaim(
+                "claim token does not belong to the current attempt"
+            )
+
     def record_execution_result(
-        self, task_id: str, head_sha: str, summary: str, now: float
+        self,
+        task_id: str,
+        head_sha: str,
+        summary: str,
+        now: float,
+        *,
+        fence: int,
+        claim_token: str | None,
     ) -> TaskRecord:
         if not head_sha:
             raise ValueError("head_sha must be non-empty")
         with self.transaction():
+            self._require_fence(fence, now)
             row = self._task_row(task_id)
             if row is None:
                 raise KeyError(task_id)
@@ -409,11 +481,13 @@ class SqliteStore:
                 raise InvalidTransition(
                     f"execution result requires working state, got {current.value}"
                 )
+            self._require_claim(row, claim_token)
             self.conn.execute(
                 """
                 UPDATE tasks
                 SET status = ?, head_sha = ?, attempts = 0, last_error = NULL,
-                    claimed_at = NULL, updated_at = ?
+                    claimed_at = NULL, updated_at = ?, attempt_has_result = 1,
+                    claim_token = NULL
                 WHERE task_id = ?
                 """,
                 (TaskStatus.REVIEW.value, head_sha, now, task_id),
@@ -434,10 +508,13 @@ class SqliteStore:
         message: str,
         now: float,
         *,
+        fence: int,
+        claim_token: str | None,
         retryable: bool,
         timeout: bool = False,
     ) -> TaskRecord:
         with self.transaction():
+            self._require_fence(fence, now)
             row = self._task_row(task_id)
             if row is None:
                 raise KeyError(task_id)
@@ -446,6 +523,7 @@ class SqliteStore:
                 raise InvalidTransition(
                     f"execution failure requires working state, got {current.value}"
                 )
+            self._require_claim(row, claim_token)
             attempts = int(row["attempts"])
             if timeout or not retryable or attempts >= self.max_attempts:
                 target = TaskStatus.NEEDS_OWNER
@@ -460,7 +538,8 @@ class SqliteStore:
             self.conn.execute(
                 """
                 UPDATE tasks
-                SET status = ?, last_error = ?, claimed_at = NULL, updated_at = ?
+                SET status = ?, last_error = ?, claimed_at = NULL, updated_at = ?,
+                    attempt_has_result = 0, claim_token = NULL
                 WHERE task_id = ?
                 """,
                 (target.value, message, now, task_id),
@@ -494,11 +573,13 @@ class SqliteStore:
         review: ReviewResult,
         now: float,
         *,
+        fence: int,
         event_key: str | None = None,
     ) -> ReviewOutcome:
         """Consume one structured review, bound to the exact current head SHA."""
         verdict = ReviewVerdict(review.verdict)
         with self.transaction():
+            self._require_fence(fence, now)
             if event_key is not None:
                 cursor = self.conn.execute(
                     """
@@ -644,8 +725,11 @@ class SqliteStore:
                 message=reason,
             )
 
-    def mark_review_failure(self, task_id: str, message: str, now: float) -> TaskRecord:
+    def mark_review_failure(
+        self, task_id: str, message: str, now: float, *, fence: int
+    ) -> TaskRecord:
         with self.transaction():
+            self._require_fence(fence, now)
             row = self._task_row(task_id)
             if row is None:
                 raise KeyError(task_id)
@@ -670,8 +754,9 @@ class SqliteStore:
             )
             return self._to_record(self._task_row(task_id))  # type: ignore[arg-type]
 
-    def pause(self, task_id: str, reason: str, now: float) -> TaskRecord:
+    def pause(self, task_id: str, reason: str, now: float, *, fence: int) -> TaskRecord:
         with self.transaction():
+            self._require_fence(fence, now)
             row = self._task_row(task_id)
             if row is None:
                 raise KeyError(task_id)
@@ -701,8 +786,10 @@ class SqliteStore:
 
         * active lease -> nothing is recovered (another scheduler owns the run);
         * expired lease -> clear it;
-        * working with a committed head -> review (never execute again);
-        * working without a head -> ready for retry, or needs-owner at limit;
+        * working with a committed current-attempt result -> review (never execute again);
+        * working without a committed current-attempt result -> ready for retry,
+          or needs-owner at the attempt limit (an interrupted rework is retried,
+          not sent to review of the old head);
         * review/changes-requested are left for normal processing.
         """
         recovered = {"requeued": 0, "review": 0, "needs_owner": 0, "lease_cleared": 0}
@@ -729,10 +816,10 @@ class SqliteStore:
             ).fetchall()
             for row in rows:
                 task_id = row["task_id"]
-                if row["head_sha"]:
+                if int(row["attempt_has_result"] or 0) == 1:
                     target = TaskStatus.REVIEW
                     recovered["review"] += 1
-                    reason = "recovered committed execution into review"
+                    reason = "recovered committed current-attempt execution into review"
                 elif int(row["attempts"]) >= self.max_attempts:
                     target = TaskStatus.NEEDS_OWNER
                     recovered["needs_owner"] += 1
@@ -744,7 +831,8 @@ class SqliteStore:
                 self.conn.execute(
                     """
                     UPDATE tasks
-                    SET status = ?, claimed_at = NULL, updated_at = ?
+                    SET status = ?, claimed_at = NULL, updated_at = ?,
+                        attempt_has_result = 0, claim_token = NULL
                     WHERE task_id = ?
                     """,
                     (target.value, now, task_id),

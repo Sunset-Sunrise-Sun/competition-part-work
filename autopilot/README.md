@@ -1,9 +1,9 @@
 # Phase 1A — 可恢复、可测试的自动化调度器骨架
 
-> 状态：**本地骨架 + mock 闭环测试；未部署、未提交、未推送、未调用真实模型/GitHub。**
+> 状态：**本地骨架 + mock 闭环测试；未部署、未接入真实执行器；已作为 Draft PR 提交供审查。**
 > 基线：`wjy/three-day-delivery` @ `c788a1ad0237055c74c42b4f80d04e1860787be8`
 > 工作区：`D:/原子赛道/workspaces/autopilot-mvp`（隔离 worktree）
-> 分支：`feat/autopilot-scheduler-mvp`（仅本地，未提交）
+> 分支：`feat/autopilot-scheduler-mvp`
 
 ## 1. 范围
 
@@ -12,6 +12,7 @@
 - Python 标准库 + SQLite，无第三方依赖；
 - 六个任务状态：`ready`、`working`、`review`、`changes-requested`、`done`、`needs-owner`；
 - SQLite 持久化的单任务状态机、全局单执行 lease、幂等键、有限重试、超时保护、崩溃恢复；
+- 长执行/审查期间的后台 lease heartbeat，以及 lease generation + claim token fencing；
 - `TaskSource` / `Executor` / `Reviewer` 接口 + fake/mock 实现；
 - 审查结果绑定精确 `head_sha`，新提交使旧审查失效；
 - 真实 GitHub/DSH adapter 仅占位并 **默认关闭**，未配置时 fail-closed；
@@ -64,18 +65,21 @@ SQLite 表：
 
 | 表 | 用途 |
 | --- | --- |
-| `tasks` | 任务状态、base/head SHA、轮次、attempts、错误、claim 时间 |
-| `lease` | 单例全局执行 lease（owner/acquired/expires） |
+| `tasks` | 任务状态、base/head SHA、轮次、attempts、错误、当前 attempt 是否已提交结果、claim token |
+| `lease` | 单例全局执行 lease（owner/acquired/expires/generation） |
 | `events` | `event_key` 主键的外部事件幂等记录 |
 | `reviews` | 结构化审查（verdict/defects/reviewer/stale/head_sha） |
 | `transitions` | 每次状态迁移审计日志 |
 
 - 所有关键写操作使用 `BEGIN IMMEDIATE` 事务；
 - 全局 lease 由 SQLite 单例行保护，两个调度器不能同时持有有效 lease；
-- `claim_next` 在事务内检查 lease 和任务状态，避免重复领取；
+- `claim_next` 在事务内检查 lease generation 和任务状态，避免重复领取；
+- 每次领取生成新的 `claim_token`；执行结果/失败必须同时匹配当前 lease generation 和 claim token；
+- 执行与审查写入（含失败/暂停/审查提交）都要求当前 lease generation，过期 worker 的结果会被拒绝；
+- 后台 `LeaseHeartbeat` 在长执行/审查期间续租（默认 interval = min(TTL/3, 5s)）；
 - `events.event_key` 唯一约束使重复 GitHub 事件/轮询被忽略；
 - `reviews` 对非 stale 的 `(task_id, head_sha, reviewer)` 建唯一索引；
-- 进程崩溃后 `recover()`：过期的 lease 被清除；`working` 且已有 head 的任务进入 `review`（不重复执行），没有 head 的任务回到 `ready`（受 attempts 上限约束）。
+- 进程崩溃后 `recover()`：过期 lease 被清除；只有**当前 attempt 已提交结果**的 `working` 任务进入 `review`；返工被中断（旧 head 仍存在但当前 attempt 未提交）会回到 `ready` 重新执行，而不是错误地审查旧 head。
 
 ## 5. Interfaces 与 fake/mock
 
@@ -104,6 +108,7 @@ Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
 | `max_attempts` | 2 | 同阶段连续执行失败/崩溃重试上限 |
 | `max_rework_rounds` | 3 | 最多 3 轮返工 |
 | `lease_ttl_seconds` | 60 | 全局 lease 过期时间 |
+| `lease_heartbeat_enabled` | true | 长执行/审查期间后台续租开关（测试可关闭以验证 fencing） |
 | `execution_timeout_seconds` | 300 | 执行超时（adapter/执行器负责落地） |
 | `review_timeout_seconds` | 60 | 审查超时 |
 | `max_steps_per_run` | 50 | 单次 `run_until_idle` 上限，防止无限循环 |
@@ -137,11 +142,14 @@ python -m unittest discover -s autopilot/tests -t . -v
 
 - 两个 dummy 任务自动连续推进；T1 一次返工后通过，T2 直接通过；
 - 重复轮询/重复事件/重复审查不重复执行；
-- 两个调度器不能同时持有有效 lease（含并发线程）；
+- 两个调度器不能同时持有有效 lease（含并发线程）；长执行期间 lease heartbeat 阻止第二调度器抢占；
 - 进程崩溃后：已提交执行进入 review、不重复执行；未提交执行受 attempts 限制重试；
+- 返工执行在提交新 head 前崩溃时回到 `ready` 重新执行，不会卡在旧 head 的 review；
+- lease generation/claim token 防止过期 worker 提交结果、提交审查或暂停新 attempt；
 - 审查绑定精确 head SHA；旧 SHA 审查不能通过；
 - 三轮返工上限 → `needs-owner`；
 - 执行超时、执行异常、审查超时、空 head、非法状态转换 → 安全暂停；
+- 专用 CI job 会执行 `python -m unittest discover -s autopilot/tests -t . -v` 与 `python -m compileall -q autopilot`。
 - adapter 默认关闭/凭证缺失 fail-closed；启用后仍为占位、不发真实请求；无 merge/main/upstream push 路径；
 - 日志脱敏辅助函数。
 

@@ -30,10 +30,19 @@ class ReviewBindingTest(unittest.TestCase):
         self.addCleanup(stack.close)
         now = stack.clock()
         stack.store.enqueue_task(task(task_id), now)
-        self.assertTrue(stack.store.acquire_lease("test-owner", 60.0, now))
-        claimed = stack.store.claim_next("test-owner", now)
+        fence = stack.store.acquire_lease("test-owner", 60.0, now)
+        self.assertIsNotNone(fence)
+        claimed = stack.store.claim_next("test-owner", now, fence)
         self.assertIsNotNone(claimed)
-        stack.store.record_execution_result(task_id, head_sha, "ready for review", now)
+        stack.fence = fence  # type: ignore[attr-defined]
+        stack.store.record_execution_result(
+            task_id,
+            head_sha,
+            "ready for review",
+            now,
+            fence=fence,
+            claim_token=claimed.claim_token,
+        )
         return stack
 
     def test_stale_head_review_is_recorded_but_cannot_pass(self) -> None:
@@ -42,6 +51,7 @@ class ReviewBindingTest(unittest.TestCase):
             "T1",
             ReviewResult(ReviewVerdict.APPROVED, "head-b", reviewer="r1"),
             stack.clock(),
+            fence=stack.fence,
         )
         self.assertTrue(stale.stale)
         self.assertFalse(stale.accepted)
@@ -52,6 +62,7 @@ class ReviewBindingTest(unittest.TestCase):
             "T1",
             approved("T1", "head-a", reviewer="r1"),
             stack.clock(),
+            fence=stack.fence,
         )
         self.assertTrue(accepted.accepted)
         self.assertEqual(stack.store.get_task("T1").status, TaskStatus.DONE)
@@ -62,17 +73,19 @@ class ReviewBindingTest(unittest.TestCase):
             "T1",
             changes("T1", "head-a", "fix me", reviewer="r1"),
             stack.clock(),
+            fence=stack.fence,
         )
         self.assertEqual(first.status, TaskStatus.CHANGES_REQUESTED)
         self.assertEqual(stack.store.get_task("T1").rework_rounds, 1)
 
-        rework = stack.store.claim_next("test-owner", stack.clock())
+        rework = stack.store.claim_next("test-owner", stack.clock(), fence=stack.fence)
         self.assertIsNotNone(rework)
-        stack.store.record_execution_result("T1", "head-b", "rework", stack.clock())
+        stack.store.record_execution_result("T1", "head-b", "rework", stack.clock(), fence=stack.fence, claim_token=rework.claim_token)
         stale = stack.store.submit_review(
             "T1",
             approved("T1", "head-a", reviewer="r2"),
             stack.clock(),
+            fence=stack.fence,
         )
         self.assertTrue(stale.stale)
         self.assertEqual(stack.store.get_task("T1").status, TaskStatus.REVIEW)
@@ -81,6 +94,7 @@ class ReviewBindingTest(unittest.TestCase):
             "T1",
             approved("T1", "head-b", reviewer="r2"),
             stack.clock(),
+            fence=stack.fence,
         )
         self.assertTrue(final.accepted)
         self.assertEqual(stack.store.get_task("T1").status, TaskStatus.DONE)

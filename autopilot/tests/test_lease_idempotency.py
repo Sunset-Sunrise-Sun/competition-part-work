@@ -23,12 +23,14 @@ class LeaseAndIdempotencyTest(unittest.TestCase):
         self.addCleanup(store_a.close)
         self.addCleanup(store_b.close)
         now = 1_000.0
-        self.assertTrue(store_a.acquire_lease("scheduler-a", 60.0, now))
-        self.assertFalse(store_b.acquire_lease("scheduler-b", 60.0, now))
-        self.assertFalse(store_a.acquire_lease("scheduler-a", 60.0, now))
-        self.assertTrue(store_a.release_lease("scheduler-a"))
-        self.assertTrue(store_b.acquire_lease("scheduler-b", 60.0, now + 1.0))
-        self.assertTrue(store_b.release_lease("scheduler-b"))
+        fence_a = store_a.acquire_lease("scheduler-a", 60.0, now)
+        self.assertIsNotNone(fence_a)
+        self.assertIsNone(store_b.acquire_lease("scheduler-b", 60.0, now))
+        self.assertIsNone(store_a.acquire_lease("scheduler-a", 60.0, now))
+        self.assertTrue(store_a.release_lease("scheduler-a", fence_a))
+        fence_b = store_b.acquire_lease("scheduler-b", 60.0, now + 1.0)
+        self.assertIsNotNone(fence_b)
+        self.assertTrue(store_b.release_lease("scheduler-b", fence_b))
 
     def test_concurrent_lease_acquisition_has_exactly_one_winner(self) -> None:
         store_a = SqliteStore(self.db_path)
@@ -36,7 +38,7 @@ class LeaseAndIdempotencyTest(unittest.TestCase):
         self.addCleanup(store_a.close)
         self.addCleanup(store_b.close)
         barrier = threading.Barrier(2)
-        results: dict[str, bool] = {}
+        results: dict[str, int | None] = {}
 
         def acquire(name: str, store: SqliteStore) -> None:
             barrier.wait(timeout=5)
@@ -50,8 +52,9 @@ class LeaseAndIdempotencyTest(unittest.TestCase):
             thread.start()
         for thread in threads:
             thread.join(timeout=10)
-        self.assertEqual(sorted(results.values()), [False, True])
-        self.assertEqual(sum(1 for value in results.values() if value), 1)
+        winners = [value for value in results.values() if value is not None]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(sum(1 for value in winners), 1)
 
     def test_two_scheduler_instances_do_not_execute_the_same_task_twice(self) -> None:
         stack = build_stack(
