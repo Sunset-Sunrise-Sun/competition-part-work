@@ -95,6 +95,11 @@ class LeaseHeartbeat:
     def lost(self) -> bool:
         return self._lost.is_set()
 
+    @property
+    def lost_event(self) -> threading.Event:
+        """Cancellation signal for subprocess adapters when the lease is lost."""
+        return self._lost
+
     def start(self) -> None:
         self._store = SqliteStore(self._db_path)
         self._thread = threading.Thread(
@@ -195,12 +200,17 @@ class Scheduler:
             heartbeat.start()
         try:
             self._poll_source(now)
-            task = self.store.claim_next(self.owner, now, fence)
+            cancel_event = heartbeat.lost_event if heartbeat is not None else None
+            task = self.store.claim_next(self.owner, self.clock(), fence)
             if task is not None:
-                return self._execute_and_review(task, now, fence)
+                return self._execute_and_review(
+                    task, now, fence, cancel_event=cancel_event
+                )
             pending_review = self.store.next_review_task()
             if pending_review is not None:
-                return self._review(pending_review, now, fence)
+                return self._review(
+                    pending_review, now, fence, cancel_event=cancel_event
+                )
             return None
         except (LeaseLost, StaleClaim):
             # The fence already failed; another worker owns the next attempt.
@@ -237,16 +247,33 @@ class Scheduler:
 
     # ------------------------------------------------------------- execution
     def _execute_and_review(
-        self, task: TaskRecord, now: float, fence: int
+        self,
+        task: TaskRecord,
+        now: float,
+        fence: int,
+        *,
+        cancel_event: threading.Event | None = None,
     ) -> RunResult:
         attempt = task.attempts
         try:
-            result = self.executor.execute(
-                task,
-                attempt,
-                self.workspace,
-                self.config.execution_timeout_seconds,
-            )
+            execute_cancellable = getattr(self.executor, "execute_cancellable", None)
+            if cancel_event is not None and callable(execute_cancellable):
+                result = execute_cancellable(
+                    task,
+                    attempt,
+                    self.workspace,
+                    self.config.execution_timeout_seconds,
+                    cancel_event,
+                )
+            else:
+                result = self.executor.execute(
+                    task,
+                    attempt,
+                    self.workspace,
+                    self.config.execution_timeout_seconds,
+                )
+        except (LeaseLost, StaleClaim) as error:
+            return self._stale_result(task.task_id, "execute", error)
         except ExecutionTimeout as error:
             return self._record_failure(
                 task,
@@ -319,7 +346,13 @@ class Scheduler:
                 status=paused.status,
                 error=str(error),
             )
-        return self._review(updated, now, fence, execution=result)
+        if cancel_event is not None and cancel_event.is_set():
+            return self._stale_result(
+                task.task_id, "execute", LeaseLost("lease heartbeat lost before result commit")
+            )
+        return self._review(
+            updated, now, fence, execution=result, cancel_event=cancel_event
+        )
 
     def _record_failure(
         self,
@@ -359,6 +392,7 @@ class Scheduler:
         fence: int,
         *,
         execution: ExecutionResult | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> RunResult:
         head_sha = task.head_sha
         if not head_sha:
@@ -378,9 +412,17 @@ class Scheduler:
                 error="missing head SHA",
             )
         try:
-            review = self.reviewer.review(
-                task, head_sha, self.config.review_timeout_seconds
-            )
+            review_cancellable = getattr(self.reviewer, "review_cancellable", None)
+            if cancel_event is not None and callable(review_cancellable):
+                review = review_cancellable(
+                    task, head_sha, self.config.review_timeout_seconds, cancel_event
+                )
+            else:
+                review = self.reviewer.review(
+                    task, head_sha, self.config.review_timeout_seconds
+                )
+        except (LeaseLost, StaleClaim) as error:
+            return self._stale_result(task.task_id, "review", error)
         except ReviewTimeout as error:
             return self._record_review_failure(
                 task,
