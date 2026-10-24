@@ -164,9 +164,14 @@ class Scheduler:
             raise ValueError(f"workspace is not a directory: {self.workspace}")
         self.config = config or SchedulerConfig()
         self.clock = clock
+        self._stop_event = threading.Event()
         self.owner = owner or (
             f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
         )
+
+    def request_stop(self) -> None:
+        """Request shutdown and cancel any active cancellable adapter."""
+        self._stop_event.set()
 
     # ------------------------------------------------------------------ leases
     def _recover_if_expired(self, now: float) -> dict[str, int] | None:
@@ -185,6 +190,8 @@ class Scheduler:
 
         Returns None when another scheduler owns the lease or no work is ready.
         """
+        if self._stop_event.is_set():
+            return None
         now = self.clock()
         self._recover_if_expired(now)
         fence = self.store.acquire_lease(
@@ -203,9 +210,25 @@ class Scheduler:
                 clock=self.clock,
             )
             heartbeat.start()
+        cancel_event = threading.Event()
+        watch_stop = threading.Event()
+
+        def watch_cancellation() -> None:
+            while not watch_stop.wait(0.1):
+                if self._stop_event.is_set() or (heartbeat is not None and heartbeat.lost):
+                    cancel_event.set()
+                    return
+
+        watcher = threading.Thread(
+            target=watch_cancellation,
+            name="autopilot-cancellation-watch",
+            daemon=True,
+        )
+        watcher.start()
         try:
             self._poll_source(now)
-            cancel_event = heartbeat.lost_event if heartbeat is not None else None
+            if cancel_event.is_set():
+                return None
             task = self.store.claim_next(self.owner, self.clock(), fence)
             if task is not None:
                 result = self._execute_and_review(
@@ -225,6 +248,8 @@ class Scheduler:
             # The fence already failed; another worker owns the next attempt.
             return None
         finally:
+            watch_stop.set()
+            watcher.join(timeout=1.0)
             if heartbeat is not None:
                 heartbeat.stop()
             self.store.release_lease(self.owner, fence)
