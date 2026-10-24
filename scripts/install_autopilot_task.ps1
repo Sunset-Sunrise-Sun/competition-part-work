@@ -18,24 +18,42 @@ $pythonCommand = Get-Command python -ErrorAction Stop
 $pythonPath = $pythonCommand.Source
 $dbPath = Join-Path $resolvedRoot "data\autopilot.sqlite3"
 
-# Secrets are intentionally not embedded in this task action. Configure the
-# required environment variables in the user's environment before installation.
+# Secrets are intentionally not embedded in this task action. Prefer the
+# authenticated GitHub CLI credential store; a fine-grained token may also be
+# supplied through the user's GITHUB_TOKEN environment variable.
 $required = @(
     "AUTOPILOT_GITHUB_ENABLED",
     "AUTOPILOT_DSH_ENABLED",
     "AUTOPILOT_REVIEW_ENABLED",
-    "GITHUB_TOKEN",
     "AUTOPILOT_GITHUB_REPOSITORY",
     "AUTOPILOT_GITHUB_BASE_BRANCH"
 )
 $missing = @()
 foreach ($name in $required) {
-    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, "User"))) {
+    $value = [Environment]::GetEnvironmentVariable($name, "User")
+    if ([string]::IsNullOrWhiteSpace($value)) {
         $missing += $name
     }
 }
 if ($missing.Count -gt 0) {
-    throw ("Missing user environment variables: " + ($missing -join ", ") + ". Do not put secret values in this script or the repository.")
+    throw ("Missing user environment variables: " + ($missing -join ", "))
+}
+foreach ($name in @("AUTOPILOT_GITHUB_ENABLED", "AUTOPILOT_DSH_ENABLED", "AUTOPILOT_REVIEW_ENABLED")) {
+    if ([Environment]::GetEnvironmentVariable($name, "User") -ne "1") {
+        throw ("Set " + $name + "=1 in the user's environment before installing the task.")
+    }
+}
+$githubToken = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "User")
+$ghToken = [Environment]::GetEnvironmentVariable("GH_TOKEN", "User")
+if ([string]::IsNullOrWhiteSpace($githubToken) -and [string]::IsNullOrWhiteSpace($ghToken)) {
+    $gh = Get-Command gh -ErrorAction SilentlyContinue
+    if ($null -eq $gh) {
+        throw "Configure GITHUB_TOKEN/GH_TOKEN in the user environment or authenticate the GitHub CLI with 'gh auth login'."
+    }
+    & $gh.Source auth status --hostname github.com *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "GitHub CLI is not authenticated. Run 'gh auth login' first."
+    }
 }
 
 $arguments = '-m autopilot.daemon --repo-root "' + $resolvedRoot + '" --db "' + $dbPath + '"'
