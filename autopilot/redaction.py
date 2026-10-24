@@ -21,6 +21,14 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"(?i)(X-Hub-Signature-256:\s*)\S+"),
         r"\1<redacted>",
     ),
+    (
+        re.compile(r"(?i)\bhttps?://[^/\s:@]+:[^@\s/]+@"),
+        "https://<redacted>@",
+    ),
+    (
+        re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{24,})\b"),
+        "<redacted-token>",
+    ),
 )
 
 
