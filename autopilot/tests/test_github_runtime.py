@@ -158,8 +158,6 @@ class GitHubIssueQueueTest(unittest.TestCase):
         adapter._request = Mock(side_effect=[
             [],  # no existing open PR
             pr_payload("https://github.com/acme/repo/pull/19"),  # create draft PR
-            [],  # issue comments
-            {},  # comment created
         ])
         with patch("autopilot.adapters.github_runtime._git", side_effect=[HEAD, "", ""]) as git_mock:
             url = adapter.publish_approved(task_record, review, execution)
@@ -187,10 +185,8 @@ class GitHubIssueQueueTest(unittest.TestCase):
         task_record = record(self.root)
         review = ReviewResult(ReviewVerdict.APPROVED, HEAD, reviewer="test-reviewer")
         execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
-        adapter._request = Mock(side_effect=[
-            [pr_payload("https://github.com/acme/repo/pull/19")],
-            [],  # issue comments
-            {},  # issue comment
+        adapter._request = Mock(return_value=[
+            pr_payload("https://github.com/acme/repo/pull/19")
         ])
         with patch("autopilot.adapters.github_runtime._git") as git_mock:
             url = adapter.publish_approved(task_record, review, execution)
@@ -200,6 +196,36 @@ class GitHubIssueQueueTest(unittest.TestCase):
             call.args[:2] == ("POST", "/pulls")
             for call in adapter._request.call_args_list
         ))
+
+    def test_done_notification_reconciles_pr_and_adds_comment_after_publication(self) -> None:
+        adapter = make_adapter(self.root)
+        task_record = record(self.root)
+        review = ReviewResult(
+            ReviewVerdict.APPROVED,
+            HEAD,
+            reviewer="test-reviewer",
+            notes="Reviewed the exact head.",
+        )
+        execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
+        adapter.publish_approved = Mock(return_value="https://github.com/acme/repo/pull/19")
+        adapter._set_labels = Mock()
+        adapter._add_comment_once = Mock()
+
+        adapter.on_task_result(task_record, RunResult(
+            task_id=task_record.task_id,
+            stage="execute-review",
+            status=TaskStatus.DONE,
+            review=review,
+            execution=execution,
+        ))
+
+        adapter.publish_approved.assert_called_once_with(task_record, unittest.mock.ANY, execution)
+        adapter._set_labels.assert_called_once()
+        args = adapter._add_comment_once.call_args.args
+        self.assertEqual(args[0], 7)
+        self.assertIn("autopilot:published gh-issue-7", args[1])
+        self.assertIn("https://github.com/acme/repo/pull/19", args[2])
+        self.assertIn("Reviewed the exact head.", args[2])
 
     def test_task_result_notifier_updates_labels_and_adds_owner_comment(self) -> None:
         adapter = make_adapter(self.root)
