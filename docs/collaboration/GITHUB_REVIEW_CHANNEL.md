@@ -1,5 +1,16 @@
 # GitHub 协作通道：LocalFit Agent × ChatGPT Independent Code Reviewer
 
+
+> **2026-10-24 范围更新（按 Issue #1 独立复核意见）**
+>
+> 本仓库已从“仅协作文档”升级为独立工作仓库：
+> - `main` 仍保持 README-only，不直接推送、不用于内部开发、不合并；
+> - 完整上游代码基线 `be013f0` 已推送到工作分支 `wjy/three-day-delivery`（保留完整 Git 历史）；
+> - 后续内部功能分支从 `wjy/three-day-delivery` 创建，功能 PR 的 base 指向该分支；
+> - 首个代码迁移 PR：#4 `feat: integrate FE-BE-01 safety contract on three-day baseline`（Draft，未合并）；
+> - ChatGPT Reviewer 接入后，在功能 PR 上直接发表 Review 意见并记录返工。
+>
+> 下方原始说明中“本仓库当前只承载协作文档与评审记录”的表述按本更新执行。
 本仓库是 LocalFit Agent 的独立评审与交接仓库：代码修改说明、测试证据、ChatGPT Review 意见和返工记录
 全部通过 GitHub PR 交接，不再依赖人工消息转发。
 
