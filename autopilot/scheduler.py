@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .interfaces import Executor, Reviewer, TaskSource
+from .interfaces import ApprovedPublisher, Executor, Reviewer, TaskResultNotifier, TaskSource
 from .models import (
     ExecutionResult,
     ExecutionTimeout,
@@ -32,6 +32,7 @@ from .models import (
     ReviewOutcome,
     ReviewResult,
     ReviewTimeout,
+    ReviewVerdict,
     StaleClaim,
     TaskRecord,
     TaskStatus,
@@ -149,11 +150,15 @@ class Scheduler:
         config: SchedulerConfig | None = None,
         owner: str | None = None,
         clock: Callable[[], float] = time.time,
+        publisher: ApprovedPublisher | None = None,
+        notifier: TaskResultNotifier | None = None,
     ) -> None:
         self.store = store
         self.source = source
         self.executor = executor
         self.reviewer = reviewer
+        self.publisher = publisher
+        self.notifier = notifier
         self.workspace = Path(workspace)
         if not self.workspace.is_dir():
             raise ValueError(f"workspace is not a directory: {self.workspace}")
@@ -203,14 +208,18 @@ class Scheduler:
             cancel_event = heartbeat.lost_event if heartbeat is not None else None
             task = self.store.claim_next(self.owner, self.clock(), fence)
             if task is not None:
-                return self._execute_and_review(
+                result = self._execute_and_review(
                     task, now, fence, cancel_event=cancel_event
                 )
+                self._notify_result(task, result)
+                return result
             pending_review = self.store.next_review_task()
             if pending_review is not None:
-                return self._review(
+                result = self._review(
                     pending_review, now, fence, cancel_event=cancel_event
                 )
+                self._notify_result(pending_review, result)
+                return result
             return None
         except (LeaseLost, StaleClaim):
             # The fence already failed; another worker owns the next attempt.
@@ -244,6 +253,11 @@ class Scheduler:
             if spec is None:
                 break
             self.store.enqueue_task(spec, now)
+
+    def _notify_result(self, task: TaskRecord, result: RunResult) -> None:
+        if self.notifier is None or result.lease_lost:
+            return
+        self.notifier.on_task_result(task, result)
 
     # ------------------------------------------------------------- execution
     def _execute_and_review(
@@ -465,6 +479,28 @@ class Scheduler:
             return self._stale_result(
                 task.task_id, "review", LeaseLost("lease heartbeat lost before review commit")
             )
+        if review.verdict is ReviewVerdict.APPROVED and self.publisher is not None:
+            try:
+                self.publisher.publish_approved(task, review, execution)
+            except Exception as error:  # noqa: BLE001 - do not mark done if publishing failed
+                try:
+                    paused = self.store.pause(
+                        task.task_id,
+                        f"approved code could not be published: {type(error).__name__}: {error}",
+                        self.clock(),
+                        fence=fence,
+                    )
+                except (LeaseLost, StaleClaim) as stale:
+                    return self._stale_result(task.task_id, "publish", stale)
+                return RunResult(
+                    task_id=task.task_id,
+                    stage="publish",
+                    status=paused.status,
+                    review=review,
+                    execution=execution,
+                    error=f"publication failed: {type(error).__name__}: {error}",
+                )
+
         event_key = f"review:{task.task_id}:{head_sha}:{review.reviewer}"
         try:
             outcome = self.store.submit_review(
