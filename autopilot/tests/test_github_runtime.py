@@ -50,6 +50,18 @@ def make_adapter(root: Path) -> GitHubIssueAdapter:
     )
 
 
+def pr_payload(url: str, *, head_sha: str = HEAD) -> dict:
+    return {
+        "html_url": url,
+        "head": {
+            "ref": "autopilot/gh-issue-7",
+            "sha": head_sha,
+            "repo": {"full_name": "acme/repo"},
+        },
+        "base": {"ref": "develop"},
+    }
+
+
 def record(root: Path, *, status: TaskStatus = TaskStatus.REVIEW) -> TaskRecord:
     return TaskRecord(
         task_id="gh-issue-7",
@@ -143,7 +155,7 @@ class GitHubIssueQueueTest(unittest.TestCase):
         execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
         adapter._request = Mock(side_effect=[
             [],  # no existing open PR
-            {"html_url": "https://github.com/acme/repo/pull/19"},  # create draft PR
+            pr_payload("https://github.com/acme/repo/pull/19"),  # create draft PR
             [],  # issue comments
             {},  # comment created
         ])
@@ -174,12 +186,13 @@ class GitHubIssueQueueTest(unittest.TestCase):
         review = ReviewResult(ReviewVerdict.APPROVED, HEAD, reviewer="test-reviewer")
         execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
         adapter._request = Mock(side_effect=[
-            [{"html_url": "https://github.com/acme/repo/pull/19"}],
+            [pr_payload("https://github.com/acme/repo/pull/19")],
             [],  # issue comments
             {},  # issue comment
         ])
-        with patch("autopilot.adapters.github_runtime._git", side_effect=[HEAD, "", ""]):
+        with patch("autopilot.adapters.github_runtime._git") as git_mock:
             url = adapter.publish_approved(task_record, review, execution)
+        git_mock.assert_not_called()
         self.assertEqual(url, "https://github.com/acme/repo/pull/19")
         self.assertFalse(any(
             call.args[:2] == ("POST", "/pulls")
