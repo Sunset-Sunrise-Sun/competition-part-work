@@ -228,6 +228,13 @@ class GitHubIssueQueueTest(unittest.TestCase):
         self.assertIn("https://github.com/acme/repo/pull/19", args[2])
         self.assertIn("Reviewed the exact head.", args[2])
 
+    def test_publisher_refuses_to_reuse_pr_promoted_out_of_draft(self) -> None:
+        adapter = make_adapter(self.root)
+        promoted = pr_payload("https://github.com/acme/repo/pull/19")
+        promoted["draft"] = False
+        with self.assertRaisesRegex(GitHubRuntimeError, "no longer a Draft"):
+            adapter._validate_pr_head(promoted, "autopilot/gh-issue-7", HEAD)
+
     def test_task_result_notifier_updates_labels_and_adds_owner_comment(self) -> None:
         adapter = make_adapter(self.root)
         task_record = record(self.root)
