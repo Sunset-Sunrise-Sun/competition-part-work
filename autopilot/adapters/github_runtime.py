@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from collections import deque
@@ -125,12 +126,28 @@ class GitHubIssueAdapter(TaskSource):
         enabled_value = _truthy("AUTOPILOT_GITHUB_ENABLED") if enabled is None else enabled
         if not enabled_value:
             raise GitHubRuntimeError("GitHub automation is disabled by default")
-        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+        if not token:
+            gh_cli = shutil.which("gh")
+            if gh_cli:
+                result = subprocess.run(
+                    [gh_cli, "auth", "token", "--hostname", "github.com"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=10,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    token = result.stdout.strip()
         repository = os.environ.get("AUTOPILOT_GITHUB_REPOSITORY", "").strip()
         base_branch = os.environ.get("AUTOPILOT_GITHUB_BASE_BRANCH", "").strip()
         missing = [
             name for name, value in (
-                ("GITHUB_TOKEN", token),
+                ("GitHub token (GITHUB_TOKEN/GH_TOKEN or authenticated gh CLI)", token),
                 ("AUTOPILOT_GITHUB_REPOSITORY", repository),
                 ("AUTOPILOT_GITHUB_BASE_BRANCH", base_branch),
             ) if not value
