@@ -1,8 +1,4 @@
-"""Small log-redaction helper.
-
-The Phase 1A scheduler never puts environment values into logs; this helper is
-provided for future adapters that may log command lines or errors.
-"""
+"""Small log-redaction helper for scheduler, DSH and GitHub adapter errors."""
 
 from __future__ import annotations
 
@@ -15,6 +11,10 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(r"(?i)(Authorization:\s*Bearer\s+)\S+"),
+        r"\1<redacted>",
+    ),
+    (
+        re.compile(r"(?i)(Authorization:\s*Basic\s+)\S+"),
         r"\1<redacted>",
     ),
     (
