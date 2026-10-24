@@ -331,6 +331,39 @@ class GitHubIssueAdapter(TaskSource):
             timeout=120.0,
         )
 
+    def _pull_query(self, branch: str) -> list[dict[str, Any]]:
+        query = urlencode({
+            "state": "open",
+            "head": f"{self.owner}:{branch}",
+            "base": self.base_branch,
+            "per_page": 100,
+        })
+        response = self._request("GET", f"/pulls?{query}")
+        if not isinstance(response, list):
+            raise GitHubRuntimeError("GitHub pull request search returned a non-list response")
+        return [item for item in response if isinstance(item, dict)]
+
+    def _validate_pr_identity(self, pr: dict[str, Any], branch: str) -> None:
+        head = pr.get("head")
+        base = pr.get("base")
+        if not isinstance(head, dict) or not isinstance(base, dict):
+            raise GitHubRuntimeError("existing pull request is missing head/base metadata")
+        if head.get("ref") != branch or base.get("ref") != self.base_branch:
+            raise GitHubRuntimeError("existing pull request branch/base does not match this task")
+        head_repo = head.get("repo")
+        if not isinstance(head_repo, dict) or head_repo.get("full_name") != self.repository:
+            raise GitHubRuntimeError("existing pull request head repository does not match configuration")
+
+    def _validate_pr_head(self, pr: dict[str, Any], branch: str, head_sha: str) -> str:
+        self._validate_pr_identity(pr, branch)
+        head = pr["head"]
+        if str(head.get("sha", "")).lower() != head_sha.lower():
+            raise GitHubRuntimeError("published pull request head does not match the reviewed SHA")
+        url = pr.get("html_url")
+        if not isinstance(url, str):
+            raise GitHubRuntimeError("GitHub did not return a valid pull request URL")
+        return url
+
     def publish_approved(
         self,
         task: TaskRecord,
@@ -343,20 +376,27 @@ class GitHubIssueAdapter(TaskSource):
         branch = execution.artifact if execution and execution.artifact else _safe_branch(task.task_id)
         if not branch.startswith("autopilot/"):
             raise GitHubRuntimeError("executor returned a branch outside autopilot/*")
-        local_head = _git(self.repo_root, "rev-parse", f"refs/heads/{branch}")
-        if local_head.lower() != review.head_sha.lower():
-            raise GitHubRuntimeError("local task branch does not match the approved head SHA")
-        self._push_branch(branch)
-        query = urlencode({
-            "state": "open",
-            "head": f"{self.owner}:{branch}",
-            "base": self.base_branch,
-            "per_page": 100,
-        })
-        existing = self._request("GET", f"/pulls?{query}")
-        if isinstance(existing, list) and existing:
+
+        existing = self._pull_query(branch)
+        if existing:
             pr = existing[0]
+            self._validate_pr_identity(pr, branch)
+            if str(pr["head"].get("sha", "")).lower() == review.head_sha.lower():
+                pr_url = self._validate_pr_head(pr, branch, review.head_sha)
+            else:
+                local_head = _git(self.repo_root, "rev-parse", f"refs/heads/{branch}")
+                if local_head.lower() != review.head_sha.lower():
+                    raise GitHubRuntimeError("local task branch does not match the approved head SHA")
+                self._push_branch(branch)
+                refreshed = self._pull_query(branch)
+                if not refreshed:
+                    raise GitHubRuntimeError("existing Draft PR disappeared after branch publication")
+                pr_url = self._validate_pr_head(refreshed[0], branch, review.head_sha)
         else:
+            local_head = _git(self.repo_root, "rev-parse", f"refs/heads/{branch}")
+            if local_head.lower() != review.head_sha.lower():
+                raise GitHubRuntimeError("local task branch does not match the approved head SHA")
+            self._push_branch(branch)
             title = f"[Autopilot] {task.title}"[:240]
             body = (
                 f"Automated draft for issue #{number}.\n\n"
@@ -367,17 +407,26 @@ class GitHubIssueAdapter(TaskSource):
                 f"Closes #{number} after this PR is merged.\n\n"
                 "This PR was created as a Draft. No automatic merge is performed."
             )
-            pr = self._request("POST", "/pulls", {
-                "title": title,
-                "head": branch,
-                "base": self.base_branch,
-                "body": body,
-                "draft": True,
-                "maintainer_can_modify": False,
-            })
-        if not isinstance(pr, dict) or not isinstance(pr.get("html_url"), str):
-            raise GitHubRuntimeError("GitHub did not return a valid pull request URL")
-        pr_url = pr["html_url"]
+            try:
+                pr = self._request("POST", "/pulls", {
+                    "title": title,
+                    "head": branch,
+                    "base": self.base_branch,
+                    "body": body,
+                    "draft": True,
+                    "maintainer_can_modify": False,
+                })
+            except GitHubApiError as error:
+                if error.status_code != 422:
+                    raise
+                raced = self._pull_query(branch)
+                if not raced:
+                    raise
+                pr = raced[0]
+            if not isinstance(pr, dict):
+                raise GitHubRuntimeError("GitHub did not return a valid pull request object")
+            pr_url = self._validate_pr_head(pr, branch, review.head_sha)
+
         self._published_prs[task.task_id] = pr_url
         marker = f"<!-- autopilot:published {task.task_id} {review.head_sha} -->"
         self._add_comment_once(
