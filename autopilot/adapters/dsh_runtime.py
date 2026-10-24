@@ -61,7 +61,7 @@ def _run_git(repo: Path, *args: str, timeout: float = 30.0) -> str:
         check=False,
     )
     if result.returncode:
-        message = result.stderr.strip()[-2000:]
+        message = redact(result.stderr.strip())[-2000:]
         raise DshRuntimeError(f"git {' '.join(args[:3])} failed ({result.returncode}): {message}")
     return result.stdout.strip()
 
@@ -141,18 +141,34 @@ def _dsh_command(cli_path: str | None, args: Sequence[str]) -> list[str]:
 
 def _agent_env(config_path: Path) -> dict[str, str]:
     env = dict(os.environ)
-    # The model process must not inherit the publishing token or GH CLI session.
+    # The model process must not inherit publishing credentials or common
+    # provider/cloud/package-registry secrets from the supervisor environment.
+    secret_suffixes = (
+        "_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PASSWD",
+        "_CREDENTIAL", "_CREDENTIALS", "_PRIVATE_KEY",
+    )
+    secret_prefixes = (
+        "AWS_", "AZURE_", "GOOGLE_", "GCP_", "DOCKER_", "NPM_",
+        "PIP_", "UV_", "TWINE_", "ARTIFACTORY_", "VAULT_",
+    )
+    secret_exact = {
+        "DATABASE_URL", "REDIS_URL", "PGPASSWORD", "MYSQL_PWD",
+        "DOCKER_AUTH_CONFIG", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL",
+        "UV_INDEX_URL", "NPM_CONFIG_REGISTRY",
+    }
     for key in list(env):
         upper = key.upper()
-        if upper in {"GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GIT_ASKPASS"}:
-            env.pop(key, None)
-        elif upper.startswith("GITHUB_") or upper.startswith("GH_"):
-            env.pop(key, None)
-        elif upper in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}:
-            env.pop(key, None)
-        elif upper.startswith("GIT_CONFIG_KEY_") or upper.startswith("GIT_CONFIG_VALUE_"):
-            env.pop(key, None)
-        elif upper in {"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_SSH", "GIT_SSH_COMMAND"}:
+        if (
+            upper in secret_exact
+            or upper.endswith(secret_suffixes)
+            or upper.startswith(secret_prefixes)
+            or upper.startswith("GITHUB_")
+            or upper.startswith("GH_")
+            or upper in {"GIT_ASKPASS", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+                         "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_SSH", "GIT_SSH_COMMAND"}
+            or upper.startswith("GIT_CONFIG_KEY_")
+            or upper.startswith("GIT_CONFIG_VALUE_")
+        ):
             env.pop(key, None)
     gh_config = config_path.parent / "empty-gh-config"
     gh_config.mkdir(exist_ok=True)
