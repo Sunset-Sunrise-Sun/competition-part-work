@@ -428,13 +428,6 @@ class GitHubIssueAdapter(TaskSource):
             pr_url = self._validate_pr_head(pr, branch, review.head_sha)
 
         self._published_prs[task.task_id] = pr_url
-        marker = f"<!-- autopilot:published {task.task_id} {review.head_sha} -->"
-        self._add_comment_once(
-            number,
-            marker,
-            f"Automated review approved `{review.head_sha}`. Draft PR: {pr_url}\n"
-            f"Review summary: {redact(review.notes)[:2000]}",
-        )
         return pr_url
 
     def on_task_result(self, task: TaskRecord, result: "RunResult") -> None:
@@ -446,8 +439,9 @@ class GitHubIssueAdapter(TaskSource):
         )
         if result.status is TaskStatus.DONE:
             # Reconciliation is idempotent: ensure an approved task has a published Draft PR.
+            pr_url = ""
             if head_sha:
-                self.publish_approved(
+                pr_url = self.publish_approved(
                     task,
                     ReviewResult(
                         verdict=ReviewVerdict.APPROVED,
@@ -462,6 +456,15 @@ class GitHubIssueAdapter(TaskSource):
                 add=["agent:done"],
                 remove=["agent:ready", "agent:working", "agent:changes-requested", "needs-owner"],
             )
+            if head_sha and pr_url:
+                notes = result.review.notes if result.review is not None else "Previously approved task; publication reconciliation."
+                marker = f"<!-- autopilot:published {task.task_id} {head_sha} -->"
+                self._add_comment_once(
+                    number,
+                    marker,
+                    f"Automated review approved `{head_sha}`. Draft PR: {pr_url}\n"
+                    f"Review summary: {redact(notes)[:2000]}",
+                )
         elif result.status is TaskStatus.CHANGES_REQUESTED:
             self._set_labels(
                 number,
