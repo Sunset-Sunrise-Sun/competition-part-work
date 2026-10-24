@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.error import URLError
 
-from autopilot.adapters.github_runtime import GitHubApiError, GitHubIssueAdapter, GitHubRuntimeError
+from autopilot.adapters.github_runtime import GitHubIssueAdapter, GitHubRuntimeError
+from autopilot.fakes import FakeExecutor, FakeReviewer, FakeTaskSource
 from autopilot.models import (
     ExecutionResult,
     ReviewResult,
@@ -15,11 +18,9 @@ from autopilot.models import (
     TaskSpec,
     TaskStatus,
 )
-from autopilot.scheduler import Scheduler, SchedulerConfig
-from autopilot.fakes import FakeExecutor, FakeReviewer, FakeTaskSource
+from autopilot.scheduler import RunResult, Scheduler, SchedulerConfig
 from autopilot.store import SqliteStore
 from autopilot.tests.support import approved, task
-
 
 SHA = "a" * 40
 HEAD = "b" * 40
@@ -77,8 +78,6 @@ class GitHubIssueQueueTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        # The adapter checks that the configured directory is a Git repository.
-        import subprocess
         subprocess.run(["git", "init", str(self.root)], check=True, capture_output=True)
 
     def test_next_ready_uses_issue_label_and_ignores_pull_requests(self) -> None:
@@ -131,7 +130,7 @@ class GitHubIssueQueueTest(unittest.TestCase):
             self.assertEqual(adapter.repository, "acme/repo")
             self.assertEqual(adapter.base_branch, "develop")
 
-    def test_approved_commit_is_pushed_to_dedicated_branch_and_draft_pr_is_idempotent(self) -> None:
+    def test_approved_commit_is_pushed_to_dedicated_branch_and_draft_pr_created(self) -> None:
         adapter = make_adapter(self.root)
         task_record = record(self.root)
         review = ReviewResult(
@@ -141,20 +140,26 @@ class GitHubIssueQueueTest(unittest.TestCase):
             notes="No blocking defect found.",
         )
         execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
-        adapter._git = Mock(side_effect=[HEAD, "", ""])
         adapter._request = Mock(side_effect=[
             [],  # no existing open PR
             {"html_url": "https://github.com/acme/repo/pull/19"},  # create draft PR
             [],  # issue comments
             {},  # comment created
         ])
-        url = adapter.publish_approved(task_record, review, execution)
+        with patch("autopilot.adapters.github_runtime._git", side_effect=[HEAD, "", ""]) as git_mock:
+            url = adapter.publish_approved(task_record, review, execution)
 
         self.assertEqual(url, "https://github.com/acme/repo/pull/19")
         self.assertEqual(adapter._published_prs["gh-issue-7"], url)
-        push_calls = [call for call in adapter._git.call_args_list if len(call.args) > 1 and call.args[1] == "push"]
+        push_calls = [
+            call for call in git_mock.call_args_list
+            if len(call.args) > 1 and call.args[1] == "push"
+        ]
         self.assertEqual(len(push_calls), 1)
-        self.assertIn("refs/heads/autopilot/gh-issue-7:refs/heads/autopilot/gh-issue-7", push_calls[0].args)
+        self.assertIn(
+            "refs/heads/autopilot/gh-issue-7:refs/heads/autopilot/gh-issue-7",
+            push_calls[0].args,
+        )
         create_pr_call = adapter._request.call_args_list[1]
         self.assertEqual(create_pr_call.args[0], "POST")
         self.assertEqual(create_pr_call.args[1], "/pulls")
@@ -167,22 +172,24 @@ class GitHubIssueQueueTest(unittest.TestCase):
         task_record = record(self.root)
         review = ReviewResult(ReviewVerdict.APPROVED, HEAD, reviewer="test-reviewer")
         execution = ExecutionResult(head_sha=HEAD, artifact="autopilot/gh-issue-7")
-        adapter._git = Mock(side_effect=[HEAD, ""])
         adapter._request = Mock(side_effect=[
             [{"html_url": "https://github.com/acme/repo/pull/19"}],
             [],  # issue comments
             {},  # issue comment
         ])
-        url = adapter.publish_approved(task_record, review, execution)
+        with patch("autopilot.adapters.github_runtime._git", side_effect=[HEAD, "", ""]):
+            url = adapter.publish_approved(task_record, review, execution)
         self.assertEqual(url, "https://github.com/acme/repo/pull/19")
-        self.assertFalse(any(call.args[:2] == ("POST", "/pulls") for call in adapter._request.call_args_list))
+        self.assertFalse(any(
+            call.args[:2] == ("POST", "/pulls")
+            for call in adapter._request.call_args_list
+        ))
 
     def test_task_result_notifier_updates_labels_and_adds_owner_comment(self) -> None:
         adapter = make_adapter(self.root)
         task_record = record(self.root)
         adapter._set_labels = Mock()
         adapter._add_comment_once = Mock()
-        from autopilot.scheduler import RunResult
         adapter.on_task_result(task_record, RunResult(
             task_id=task_record.task_id,
             stage="execute",
@@ -198,23 +205,10 @@ class GitHubIssueQueueTest(unittest.TestCase):
 
     def test_api_errors_do_not_echo_token(self) -> None:
         adapter = make_adapter(self.root)
-        with patch("autopilot.adapters.github_runtime.urlopen", side_effect=HTTPErrorStub()):
-            with self.assertRaises(GitHubApiError) as caught:
+        with patch("autopilot.adapters.github_runtime.urlopen", side_effect=URLError("offline")):
+            with self.assertRaises(GitHubRuntimeError) as caught:
                 adapter._request("GET", "/issues")
         self.assertNotIn("test-token", str(caught.exception))
-
-
-class HTTPErrorStub(Exception):
-    code = 403
-
-    def read(self) -> bytes:
-        return b'{"message":"forbidden"}'
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
 
 
 class PublisherGateTest(unittest.TestCase):
