@@ -171,9 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.status:
                 import json
+                lease = store.get_lease()
+                lease_value = lease.__dict__ if hasattr(lease, "__dict__") else lease
                 print(json.dumps({
                     "counts": store.counts(),
-                    "lease": store.get_lease(),
+                    "lease": lease_value,
                     "tasks": [
                         {
                             "task_id": item.task_id,

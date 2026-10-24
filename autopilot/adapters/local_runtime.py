@@ -181,14 +181,17 @@ def parse_json_object(text: str) -> dict[str, Any]:
 
 def validate_changed_paths(paths: Sequence[str]) -> None:
     for raw_path in paths:
-        path = raw_path.replace("\\", "/").lstrip("./")
+        path = raw_path.replace("\\", "/")
+        while path.startswith("./"):
+            path = path[2:]
         lower = path.lower()
         parts = {part.lower() for part in path.split("/") if part}
+        basename = lower.rsplit("/", 1)[-1]
         if any(part in BLOCKED_PARTS for part in parts):
             raise ExternalCommandError(f"refusing to stage protected path: {path}")
         if lower == ".env" or lower.startswith(".env.") or lower.endswith(BLOCKED_SUFFIXES):
             raise ExternalCommandError(f"refusing to stage protected path: {path}")
-        if lower in {"auth.json", "credentials.json", "secrets.json"}:
+        if basename in {"auth.json", "credentials.json", "secrets.json"} or "credential" in basename or basename.startswith("secret"):
             raise ExternalCommandError(f"refusing to stage protected path: {path}")
         if any(lower.startswith(prefix) for prefix in BLOCKED_PREFIXES):
             raise ExternalCommandError(f"task attempted to modify protected path: {path}")
@@ -211,6 +214,7 @@ class GitHubCli:
     def list_ready_issues(self) -> list[dict[str, Any]]:
         value = self.json([
             "issue", "list", "--repo", self.repository, "--state", "open",
+            "--sort", "created", "--order", "asc",
             "--label", "agent:ready", "--limit", "100", "--json",
             "number,title,body,url,labels",
         ])
@@ -404,7 +408,8 @@ class DshGitExecutor:
             raise ExternalCommandError("task base SHA is not an ancestor of the allowed remote base")
 
         workspace = self.task_root / f"issue-{number}"
-        if not workspace.exists():
+        created_new = not workspace.exists()
+        if created_new:
             run_checked(
                 ["git", "clone", "--no-hardlinks", "--no-checkout", str(self.repo_path), str(workspace)],
                 timeout_seconds=180,
@@ -416,11 +421,12 @@ class DshGitExecutor:
         if self.github.repository not in remote_url or "yky666/ai_health_assistant" in remote_url:
             raise ExternalCommandError("task clone origin is not the owner-controlled work repository")
         self._git(workspace, "fetch", "--no-tags", "origin", self.base_branch, timeout=120)
-        status = self._git(workspace, "status", "--porcelain", "--untracked-files=all")
-        if status:
-            raise ExternalCommandError(
-                f"task workspace is dirty; preserving it rather than resetting: {status[:600]}"
-            )
+        if not created_new:
+            status = self._git(workspace, "status", "--porcelain", "--untracked-files=all")
+            if status:
+                raise ExternalCommandError(
+                    f"task workspace is dirty; preserving it rather than resetting: {status[:600]}"
+                )
 
         local_branch = subprocess.run(
             ["git", "-C", str(workspace), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
@@ -454,6 +460,11 @@ class DshGitExecutor:
 
         if self._git(workspace, "branch", "--show-current") != branch:
             raise ExternalCommandError("task clone is not on its dedicated agent branch")
+        final_status = self._git(workspace, "status", "--porcelain", "--untracked-files=all")
+        if final_status:
+            raise ExternalCommandError(
+                f"task workspace is not clean after branch preparation: {final_status[:600]}"
+            )
         self.github.set_issue_labels(
             number, add=["agent:working"],
             remove=["agent:ready", "agent:review", "agent:changes-requested"],
@@ -474,7 +485,7 @@ class DshGitExecutor:
             "- Do not search for credentials, tokens, cookies, SSH keys, browser profiles, or user secrets.\n"
             "- Do not access parent directories or other repositories.\n"
             "- Do not edit runner/setup files, autopilot files, GitHub workflow files, or security rules.\n"
-            "- Do not run git commit, git push, git reset, git clean, checkout, merge, rebase, or deployment commands. "
+            "- Do not run Git publication, reset, clean, checkout, merge, rebase, or deployment commands. "
             "The orchestrator owns Git operations.\n"
             "- Never push to main or yky666/ai_health_assistant. Never merge or enable auto-merge.\n"
             "- Do not claim tests passed unless you actually ran them; the orchestrator runs fixed validation commands.\n"
