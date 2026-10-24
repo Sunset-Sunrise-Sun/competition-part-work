@@ -82,6 +82,7 @@ class GitHubIssueQueueTest(unittest.TestCase):
 
     def test_next_ready_uses_issue_label_and_ignores_pull_requests(self) -> None:
         adapter = make_adapter(self.root)
+        adapter.poll_interval_seconds = 3600  # keep the test independent of wall-clock scheduling
         adapter._ensure_label = Mock()
         adapter._fetch_base_sha = Mock(return_value=SHA)
         adapter._ready_issues = Mock(return_value=[
