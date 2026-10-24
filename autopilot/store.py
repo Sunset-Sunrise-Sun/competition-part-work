@@ -468,6 +468,7 @@ class SqliteStore:
         *,
         fence: int,
         claim_token: str | None,
+        artifact: str = "",
     ) -> TaskRecord:
         if not head_sha:
             raise ValueError("head_sha must be non-empty")
@@ -482,15 +483,27 @@ class SqliteStore:
                     f"execution result requires working state, got {current.value}"
                 )
             self._require_claim(row, claim_token)
+            payload = json.loads(row["payload_json"])
+            payload["last_execution"] = {
+                "head_sha": head_sha,
+                "summary": summary,
+                "artifact": artifact,
+            }
             self.conn.execute(
                 """
                 UPDATE tasks
                 SET status = ?, head_sha = ?, attempts = 0, last_error = NULL,
                     claimed_at = NULL, updated_at = ?, attempt_has_result = 1,
-                    claim_token = NULL
+                    claim_token = NULL, payload_json = ?
                 WHERE task_id = ?
                 """,
-                (TaskStatus.REVIEW.value, head_sha, now, task_id),
+                (
+                    TaskStatus.REVIEW.value,
+                    head_sha,
+                    now,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    task_id,
+                ),
             )
             self._log_transition(
                 task_id,
@@ -694,14 +707,26 @@ class SqliteStore:
                 target = TaskStatus.NEEDS_OWNER
                 reason = "reviewer requires owner"
 
+            payload = json.loads(row["payload_json"])
+            payload["last_review"] = {
+                "head_sha": review.head_sha,
+                "verdict": verdict.value,
+                "reviewer": review.reviewer,
+                "defects": list(review.defects),
+                "notes": review.notes,
+            }
             extra: dict[str, Any] = {}
             if (
                 verdict is ReviewVerdict.CHANGES_REQUESTED
                 and target is TaskStatus.CHANGES_REQUESTED
             ):
                 extra["rework_rounds"] = int(row["rework_rounds"]) + 1
-            fields = ["status = ?", "updated_at = ?"]
-            params: list[Any] = [target.value, now]
+            fields = ["status = ?", "updated_at = ?", "payload_json = ?"]
+            params: list[Any] = [
+                target.value,
+                now,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            ]
             for key, value in extra.items():
                 fields.append(f"{key} = ?")
                 params.append(value)
