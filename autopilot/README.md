@@ -102,7 +102,7 @@ Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
 Runtime adapter 状态：
 
 - `DshHeadlessAdapter`：Phase 1A 占位类仍保留，不执行真实命令。
-- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每个任务使用独立 Git worktree，校验 base/head SHA，从子进程环境中移除常见 GitHub token/SSH agent 变量并隔离 Git/GH CLI 配置，拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。
+- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每个任务使用独立 Git worktree，校验 base/head SHA，从 DSH 子进程环境中移除常见 API key/token/secret/password、云凭证、GitHub token 与 SSH agent 变量，并隔离 Git/GH CLI 配置；拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。DSH 必须使用独立 profile 管理模型认证；若 CLI 依赖环境变量中的 API key，本执行路径会将其移除而导致启动失败，不应为图方便重新暴露密钥。
 - `DshDiffReviewer`：独立启动一次 headless 调用，只把脱敏后的精确 base..head patch 传给审查器，要求返回绑定 head SHA 的结构化 JSON；默认由 `AUTOPILOT_REVIEW_ENABLED=1` 显式启用。
 - `GitHubRestAdapter`：仍是 fail-closed 占位类；新增 `GitHubIssueAdapter` 轮询带 `agent:ready` 标签的 Issues，审查通过后只推送 `autopilot/*` 分支并创建 Draft PR；不合并。
 - `python -m autopilot.daemon`：前台轮询 runner，要求显式启用 GitHub/DSH/Review；发布失败不会把任务标记为 done。
@@ -198,9 +198,9 @@ python -m unittest discover -s autopilot/tests -t . -v
 ## 10. 日志与秘密
 
 - 调度器只记录 task id、状态、head SHA、错误类型；不会记录环境变量值、token、cookie；
-- `redaction.redact()` 对 `DEEPSEEK_API_KEY=...`、`GITHUB_TOKEN=...`、`Authorization: Bearer ...`、`X-Hub-Signature-256` 做掩码；
+- `redaction.redact()` 对常见 API-key/token 环境变量赋值、Bearer/Basic 授权头、URL 内嵌凭证、常见原始 token 格式及 `X-Hub-Signature-256` 做掩码；
 - 测试使用 `dummy-test-only` 字符串，仅验证“adapter 不执行真实动作”，不是真实凭证；
-- 仓库不创建 `.env`，不读取本机凭证存储。
+- 仓库不创建 `.env`；GitHub runtime 可从已认证的 `gh auth token` 读取发布凭证，或从 `GITHUB_TOKEN` / `GH_TOKEN` 环境变量读取。凭证只在运行时进程内使用，不写入仓库文件；DSH 自身的 profile/凭证目录仍需按独立操作系统账户与权限隔离。
 
 ## 11. 已知限制
 
