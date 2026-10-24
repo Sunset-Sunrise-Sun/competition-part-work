@@ -18,7 +18,7 @@
 - 旧版 GitHub/DSH adapter 仍为占位；新增的 DSH runtime adapter **默认关闭**，显式启用后才会调用本机 CLI；
 - 两个 dummy 任务自动连续推进，其中一个发生返工并重新审查。
 
-**不包含**：真实 GitHub 写入、真实 DSH headless 执行、真实模型调用、Webhook 入站、ChatGPT 自动 Review、常驻 Windows 服务、合并/main/upstream push。
+**不包含**：GitHub 任务读取/写入与远程发布、已在用户设备验收的真实 DSH/模型调用、Webhook 入站、ChatGPT API Review、常驻 Windows 服务、合并/main/upstream push。
 
 ## 2. 目录
 
