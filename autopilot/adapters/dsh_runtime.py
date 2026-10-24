@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+from ..redaction import redact
 from ..models import (
     ExecutionResult,
     ExecutionTimeout,
@@ -135,6 +136,11 @@ def _agent_env(config_path: Path) -> dict[str, str]:
             env.pop(key, None)
         elif upper.startswith("GIT_CONFIG_KEY_") or upper.startswith("GIT_CONFIG_VALUE_"):
             env.pop(key, None)
+        elif upper in {"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_SSH", "GIT_SSH_COMMAND"}:
+            env.pop(key, None)
+    gh_config = config_path.parent / "empty-gh-config"
+    gh_config.mkdir(exist_ok=True)
+    env["GH_CONFIG_DIR"] = str(gh_config)
     env["GIT_CONFIG_GLOBAL"] = str(config_path)
     env["GIT_CONFIG_SYSTEM"] = str(config_path)
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -338,7 +344,7 @@ class DshWorktreeExecutor:
             head_sha = _run_git(worktree, "rev-parse", "HEAD")
             return ExecutionResult(
                 head_sha=head_sha,
-                summary=f"DSH completed; {len(staged_paths)} files changed; final: {final_text[:500]}",
+                summary=f"DSH completed; {len(staged_paths)} files changed",
                 artifact=branch,
             )
         finally:
@@ -363,11 +369,13 @@ class DshDiffReviewer:
         enabled: bool | None = None,
         reviewer_name: str = "dsh-headless-independent-review",
         max_diff_chars: int = 100_000,
+        repo_root: str | Path | None = None,
     ) -> None:
         self.cli_path = cli_path
         self.enabled = _truthy("AUTOPILOT_REVIEW_ENABLED") if enabled is None else enabled
         self.reviewer_name = reviewer_name
         self.max_diff_chars = max_diff_chars
+        self.repo_root = Path(repo_root).resolve() if repo_root is not None else None
 
     def review(self, task: TaskRecord, head_sha: str, timeout_seconds: float) -> ReviewResult:
         return self.review_cancellable(task, head_sha, timeout_seconds, threading.Event())
@@ -381,12 +389,13 @@ class DshDiffReviewer:
     ) -> ReviewResult:
         if not self.enabled:
             raise DshRuntimeError("real DSH review is disabled; set AUTOPILOT_REVIEW_ENABLED=1 after owner approval")
-        repo = _repo_root(Path(task.payload.get("repo_root") or Path.cwd()))
+        configured_root = self.repo_root or Path(str(task.payload.get("repo_root") or Path.cwd()))
+        repo = _repo_root(configured_root)
         base_sha = _validate_commit(repo, task.base_sha)
         exact_head = _validate_commit(repo, head_sha)
         if exact_head.lower() != head_sha.lower():
             raise DshRuntimeError("review head SHA did not resolve exactly")
-        diff = _run_git(repo, "diff", "--no-ext-diff", "--no-color", "--unified=3", base_sha, exact_head)
+        diff = redact(_run_git(repo, "diff", "--no-ext-diff", "--no-color", "--unified=3", base_sha, exact_head))
         if not diff.strip():
             raise DshRuntimeError("cannot review an empty diff")
         if len(diff) > self.max_diff_chars:
@@ -439,6 +448,10 @@ class DshDiffReviewer:
         notes = payload.get("notes", "")
         if not isinstance(notes, str):
             raise DshRuntimeError("reviewer notes must be a string")
+        if verdict is ReviewVerdict.APPROVED and defects_value:
+            raise DshRuntimeError("reviewer cannot approve while listing blocking defects")
+        if verdict is ReviewVerdict.CHANGES_REQUESTED and not defects_value:
+            raise DshRuntimeError("changes-requested verdict requires at least one defect")
         return ReviewResult(
             verdict=verdict,
             head_sha=exact_head,
