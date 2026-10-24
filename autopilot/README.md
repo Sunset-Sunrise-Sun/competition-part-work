@@ -29,7 +29,7 @@ autopilot/
   store.py            # SQLite schema、状态机、lease、幂等、恢复
   scheduler.py        # 单槽调度循环、执行/审查编排、超时/失败暂停
   fakes.py            # FakeClock / FakeTaskSource / FakeExecutor / FakeReviewer
-  redaction.py        # 日志脱敏辅助（未来 adapter 使用）
+  redaction.py        # 日志脱敏辅助（runtime adapters 使用）
   cli.py              # status / recover 只读/恢复命令
   adapters/
     dsh.py             # Phase 1A DSH 占位 adapter（保留）
@@ -92,6 +92,8 @@ SQLite 表：
 TaskSource.next_ready() -> TaskSpec | None
 Executor.execute(task, attempt, workspace, timeout_seconds) -> ExecutionResult
 Reviewer.review(task, head_sha, timeout_seconds) -> ReviewResult
+ApprovedPublisher.publish_approved(task, review, execution) -> Draft PR URL
+TaskResultNotifier.on_task_result(task, result) -> None
 ```
 
 - `FakeTaskSource`：按顺序发放任务；重复任务由 `enqueue_task` 幂等吸收。
@@ -206,7 +208,7 @@ python -m unittest discover -s autopilot/tests -t . -v
 - 三轮返工上限 → `needs-owner`；
 - 执行超时、执行异常、审查超时、空 head、非法状态转换 → 安全暂停；
 - 专用 CI job 会执行 `python -m unittest discover -s autopilot/tests -t . -v` 与 `python -m compileall -q autopilot`。
-- 旧占位 adapter 默认关闭；新 DSH runtime 只有显式启用才会启动真实进程。测试通过 fake DSH 子进程验证工作树隔离、超时/租约丢失终止、敏感路径拦截和审查 JSON 校验；无 GitHub push/merge/main/upstream push 路径；
+- 旧占位 adapter 默认关闭；新 DSH runtime 只有显式启用才会启动真实进程。测试通过 fake DSH 子进程验证工作树隔离、超时/租约丢失终止、敏感路径拦截和审查 JSON 校验；GitHub runtime 只允许推送 `autopilot/*` 专用分支并创建 Draft PR，不包含 merge、auto-merge、默认分支推送或 upstream 推送路径；
 - 日志脱敏辅助函数。
 
 ## 10. 日志与秘密
