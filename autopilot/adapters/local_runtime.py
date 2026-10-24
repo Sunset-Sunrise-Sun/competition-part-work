@@ -49,7 +49,7 @@ class ExternalCommandError(RuntimeError):
     """An external tool failed; diagnostics are redacted."""
 
 
-def _clean_child_env() -> dict[str, str]:
+def _clean_child_env(*, dsh_unattended: bool = False) -> dict[str, str]:
     env = dict(os.environ)
     secret_names = {
         "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
@@ -61,6 +61,10 @@ def _clean_child_env() -> dict[str, str]:
         upper = key.upper()
         if upper in secret_names or upper.startswith("AWS_SESSION_TOKEN"):
             env.pop(key, None)
+    if dsh_unattended:
+        # Scoped to the DSH child process only; never persisted to global settings.
+        # This disables headless approval prompts but grants the child full host access.
+        env["DSH_PERMISSION_MODE"] = "danger-full-access"
     return env
 
 
@@ -98,6 +102,7 @@ def run_process(
     input_text: str | None = None,
     cancel_event: threading.Event | None = None,
     clean_env: bool = False,
+    dsh_unattended: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
@@ -109,7 +114,7 @@ def run_process(
         "text": True, "encoding": "utf-8", "errors": "replace",
     }
     if clean_env:
-        kwargs["env"] = _clean_child_env()
+        kwargs["env"] = _clean_child_env(dsh_unattended=dsh_unattended)
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     process = subprocess.Popen(command, **kwargs)
@@ -592,7 +597,7 @@ class DshGitExecutor:
         result = run_process(
             self.dsh_cli, ["--profile", self.dsh_profile, "--json", "-"],
             cwd=task_workspace, timeout_seconds=timeout_seconds,
-            input_text=prompt, cancel_event=cancel_event, clean_env=True,
+            input_text=prompt, cancel_event=cancel_event, clean_env=True, dsh_unattended=True,
         )
         log_path = self.log_root / f"issue-{task.payload['issue_number']}" / f"attempt-{attempt}-dsh.txt"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -814,7 +819,7 @@ def run_preflight(
         )
         dsh_result = run_process(
             dsh_cli, ["--profile", dsh_profile, "--json", "-"],
-            cwd=temp, timeout_seconds=90, input_text=dsh_prompt, clean_env=True,
+            cwd=temp, timeout_seconds=90, input_text=dsh_prompt, clean_env=True, dsh_unattended=True,
         )
         marker_file = temp / "dsh-preflight.txt"
         if dsh_result.returncode != 0 or not marker_file.is_file():

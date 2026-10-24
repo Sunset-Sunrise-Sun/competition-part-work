@@ -34,6 +34,10 @@ if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "gh is still not available in PATH; open a new PowerShell and rerun setup." }
 if (-not (Get-Command codex -ErrorAction SilentlyContinue)) { throw "codex is still not available in PATH; open a new PowerShell and rerun setup." }
 
+Write-Warning "For unattended DSH headless work, the runner sets DSH_PERMISSION_MODE=danger-full-access only for the DSH child process. This does not change global Harness settings, but it grants that process full access to files available to your Windows user. Prompt instructions are not a security boundary."
+$PermissionConfirmation = Read-Host "Type YES to accept DSH full-access mode for this local runner"
+if ($PermissionConfirmation -cne "YES") { throw "Full-access mode was not accepted; setup stopped before preflight or scheduling." }
+
 & gh auth status --hostname github.com
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Complete the one-time GitHub browser login. No token will be pasted into chat or written to the repository."
@@ -95,6 +99,23 @@ try {
     }
 }
 finally { Pop-Location }
+
+# Issues with this explicit title prefix are queued only after all preflight checks pass.
+# Existing agent status labels are respected, so completed/paused issues are never re-queued.
+$QueueOutput = (& gh issue list --repo "Sunset-Sunrise-Sun/competition-part-work" --state open --limit 100 --json number,title,labels | Out-String)
+if ($LASTEXITCODE -ne 0) { throw "Could not inspect pending task queue after preflight." }
+$QueueIssues = @($QueueOutput | ConvertFrom-Json)
+$StatusLabels = @("agent:ready", "agent:working", "agent:review", "agent:changes-requested", "agent:done", "agent:needs-owner")
+foreach ($Issue in $QueueIssues) {
+    if (-not $Issue.title.StartsWith("[AUTOPILOT-QUEUE]", [StringComparison]::Ordinal)) { continue }
+    $IssueLabelNames = @($Issue.labels | ForEach-Object { $_.name })
+    $ExistingStatus = @($IssueLabelNames | Where-Object { $_ -in $StatusLabels })
+    if ($ExistingStatus.Count -eq 0) {
+        & gh issue edit $Issue.number --repo "Sunset-Sunrise-Sun/competition-part-work" --add-label "agent:ready"
+        if ($LASTEXITCODE -ne 0) { throw "Could not activate queued issue #$($Issue.number)." }
+        Write-Host "Queued issue #$($Issue.number) after successful preflight."
+    }
+}
 
 if (-not $SkipSchedule) {
     $TaskName = "LocalFitAutopilot"

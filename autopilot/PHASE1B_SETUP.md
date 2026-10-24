@@ -26,7 +26,9 @@ Then open a new PowerShell in D:/原子赛道/workspaces/autopilot-runner and ru
 
 The setup script may install GitHub CLI and Codex CLI, and may open browser login flows for GitHub and Codex. These are one-time local setup steps. Authentication stays in the respective local credential stores; do not paste any token into chat, an issue, a prompt, or this repository.
 
-Before registering the scheduled task, setup runs a preflight in a disposable temporary Git repository:
+Before registering the scheduled task, setup asks for an explicit local confirmation before setting DSH_PERMISSION_MODE=danger-full-access for the DSH child process only. This is not a global Harness setting, but it grants that process full access to files available to the current Windows user. Prompt constraints are not a security boundary; do not continue unless you accept this risk.
+
+Setup then runs a preflight in a disposable temporary Git repository:
 - GitHub CLI authentication and repository identity;
 - access to the allowed base branch;
 - DSH headless model access plus actual file-write capability inside the temporary workspace;
@@ -36,7 +38,7 @@ If DSH preflight fails with a missing model credential or an approval prompt, se
 
 ## Queueing a task
 
-Create a GitHub issue with a clear objective, explicit acceptance criteria, tests to run, scope boundaries, and the label agent:ready. Do not queue an issue that asks the agent to change the runner, security rules, GitHub workflows, or this setup procedure.
+Create a GitHub issue with a clear objective, explicit acceptance criteria, tests to run, and scope boundaries. For the initial queue, use the exact title prefix [AUTOPILOT-QUEUE]. After preflight passes, setup creates the required labels and adds agent:ready to open issues with that prefix only when they do not already carry an agent status label. Do not use this prefix for ordinary issues or tasks that ask the agent to change the runner, security rules, GitHub workflows, or this setup procedure.
 
 The initial task source is restricted to the owner-controlled work repository and the base branch wjy/three-day-delivery. Each task uses a separate agent/issue-N branch and a Draft PR. No task branch is merged automatically.
 
