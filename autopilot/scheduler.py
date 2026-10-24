@@ -1,9 +1,9 @@
 """Single-slot scheduler loop for the Phase 1A skeleton.
 
-The scheduler is deliberately local and credential-free. It polls a TaskSource,
-executes at most one task per ``run_once`` while holding the SQLite global
-lease, and reviews the exact head it committed. Real GitHub/DSH adapters are
-not wired here.
+The scheduler polls a TaskSource, executes at most one task per ``run_once``
+while holding the SQLite global lease, and reviews the exact head it committed.
+Optional publisher/notifier hooks keep external writes outside the state-store
+transaction; the GitHub adapter must publish only dedicated task branches.
 
 Two lease protections are used:
 
