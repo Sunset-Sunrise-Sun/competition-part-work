@@ -105,8 +105,8 @@ TaskResultNotifier.on_task_result(task, result) -> None
 Runtime adapter 状态：
 
 - `DshHeadlessAdapter`：Phase 1A 占位类仍保留，不执行真实命令。
-- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每个任务使用独立 Git worktree，校验 base/head SHA，从 DSH 子进程环境中移除常见 API key/token/secret/password、云凭证、GitHub token 与 SSH agent 变量，并隔离 Git/GH CLI 配置；拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。DSH 必须使用独立 profile 管理模型认证；若 CLI 依赖环境变量中的 API key，本执行路径会将其移除而导致启动失败，不应为图方便重新暴露密钥。
-- `DshDiffReviewer`：独立启动一次 headless 调用，只把脱敏后的精确 base..head patch 传给审查器，要求返回绑定 head SHA 的结构化 JSON；默认由 `AUTOPILOT_REVIEW_ENABLED=1` 显式启用。
+- `DshWorktreeExecutor`：新增的 opt-in 执行器；要求 `AUTOPILOT_DSH_ENABLED=1`（或构造时显式启用）以及本机可用的 `dsh` CLI。每次调用在临时目录生成独立 `--patch` overlay：仅启用本地 credentials 服务，`workspace-write` 的 `workspaceRoot` 指向该任务 worktree，只允许 `tool-fs` / `tool-fs-search`，禁用 shell、web、subagent、workflow 等其余工具；调用结束清理 overlay，并记录脱敏摘要和 SHA-256。每个任务使用独立 Git worktree，校验 base/head SHA，从 DSH 子进程环境中移除常见 API key/token/secret/password、云凭证、GitHub token 与 SSH agent 变量，并隔离 Git/GH CLI 配置；拒绝秘密文件、数据目录、GitHub workflows 与符号链接变更，监督进程负责提交本地分支；不 push。DSH 必须使用独立 profile 管理模型认证；不得通过向 DSH 环境注入 API key 来绕过凭据服务。
+- `DshDiffReviewer`：独立启动一次 headless 调用，每次生成临时 `--patch` overlay（仅启用 credentials、`read-only` 沙箱、禁用全部工具插件），只把脱敏后的精确 base..head patch 传给审查器，要求返回绑定 head SHA 的结构化 JSON；默认由 `AUTOPILOT_REVIEW_ENABLED=1` 显式启用。
 - `GitHubRestAdapter`：仍是 fail-closed 占位类；新增 `GitHubIssueAdapter` 轮询带 `agent:ready` 标签的 Issues，审查通过后只推送 `autopilot/*` 分支并创建 Draft PR；不合并。
 - `python -m autopilot.daemon`：前台轮询 runner，要求显式启用 GitHub/DSH/Review；发布失败不会把任务标记为 done。
 - DSH 子进程超时或 lease 丢失时会尝试终止进程树；CI 使用 fake CLI 和 mock GitHub API 验证控制流，真实 Windows/DSH/Token 仍未验收。
