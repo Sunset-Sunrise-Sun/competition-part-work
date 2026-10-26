@@ -133,6 +133,16 @@ class GitHubIssueQueueTest(unittest.TestCase):
                 enabled=False,
             )
 
+    def test_read_only_probe_methods_use_get_only(self) -> None:
+        adapter = make_adapter(self.root)
+        adapter._request = Mock(side_effect=[{}, {}])
+        adapter.check_repository_access()
+        adapter.check_base_branch()
+        calls = [call.args for call in adapter._request.call_args_list]
+        self.assertEqual(calls[0], ("GET", ""))
+        self.assertEqual(calls[1][0], "GET")
+        self.assertTrue(calls[1][1].startswith("/branches/"))
+
     def test_from_env_requires_explicit_enable_and_configuration(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(GitHubRuntimeError):

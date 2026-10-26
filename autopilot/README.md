@@ -1,9 +1,9 @@
 # Autopilot — scheduler, DSH runtime and GitHub loop prototype
 
-> 状态：**Phase 1A mock 调度器、Phase 1B opt-in DSH 执行/审查、Phase 1C GitHub Issue 领取/审核后 Draft PR 发布与前台轮询 runner 已写入独立 Draft 分支；尚未在用户 Windows 环境实跑，也未验证真实凭证。**
-> 基线：`wjy/three-day-delivery` @ `c788a1ad0237055c74c42b4f80d04e1860787be8`
-> 工作区：`D:/原子赛道/workspaces/autopilot-mvp`（隔离 worktree）
-> 分支：`feat/autopilot-scheduler-mvp`
+> 状态：**Phase 1A mock 调度器、Phase 1B opt-in DSH 执行/审查、Phase 1C GitHub Issue 领取/审核后 Draft PR 发布与前台轮询 runner 已写入独立 Draft 分支；尚未在用户 Windows 环境实跑，也未验证真实凭证。本分支新增只读 preflight。**
+> 基线：Phase 1C `feat/autopilot-phase1c-github-loop`
+> 工作区：`D:/原子赛道/workspaces/autopilot-preflight`（隔离 worktree）
+> 分支：`feat/autopilot-preflight`
 
 ## 1. 范围
 
@@ -31,6 +31,7 @@ autopilot/
   fakes.py            # FakeClock / FakeTaskSource / FakeExecutor / FakeReviewer
   redaction.py        # 日志脱敏辅助（runtime adapters 使用）
   cli.py              # status / recover 只读/恢复命令
+  preflight.py        # --preflight 只读环境预检（不建库/不建 worktree/不调用模型）
   adapters/
     dsh.py             # Phase 1A DSH 占位 adapter（保留）
     dsh_runtime.py     # opt-in DSH worktree executor + diff reviewer
@@ -130,7 +131,7 @@ Runtime adapter 状态：
 当前有前台 runner 和 Windows Task Scheduler 安装脚本，但**尚未在你的电脑上启动或注册**。先手动执行一次 smoke test，再决定是否安装常驻任务。
 
 ```powershell
-cd D:\原子赛道\workspaces\autopilot-mvp
+cd D:\原子赛道\workspaces\autopilot-preflight
 
 # 只读查看任务/lease 状态
 python -m autopilot.cli --db data/autopilot.sqlite3 status
@@ -189,10 +190,44 @@ Stop-ScheduledTask -TaskName "LocalFitAutopilot"
 
 任务只在用户登录且电脑运行时执行；运行时失败会退出并由 Task Scheduler 有限重启。达到 `needs-owner` 会暂停本轮自动推进。**不自动合并任何 PR。** 首次真实运行前，请先确认本机 DSH profile 的工具权限；worktree 不是 OS 级沙箱，不能把它当作隔离恶意代码的安全边界。
 
+## 8.1 只读预检（Preflight）
+
+在真实冒烟测试之前先运行只读预检。它不会领取 Issue、调用 DSH/模型、创建 SQLite 数据库、创建 worktree、提交代码、写 GitHub 或注册计划任务。
+
+```powershell
+cd D:\原子赛道\workspaces\autopilot-preflight
+
+# 人工可读报告
+python -m autopilot.daemon --repo-root . --preflight
+
+# 单对象 JSON，便于机器解析
+python -m autopilot.daemon --repo-root . --preflight --json
+```
+
+检查范围：
+
+- **配置**：`AUTOPILOT_GITHUB_ENABLED`、`AUTOPILOT_DSH_ENABLED`、`AUTOPILOT_REVIEW_ENABLED` 是否显式启用；GitHub `owner/name`、base branch 是否有效；GitHub 凭据是否可取得（不输出值）；DSH CLI 是否可解析。
+- **本地环境**：`--repo-root` 是否为 Git 根目录；Python（>=3.11）、Git、DSH 入口（含 Windows `.cmd`/`.bat`→`cmd.exe`）是否满足；工作区状态、本地 base branch 是否存在（无法确认时标 warning，而不是假装通过）。
+- **GitHub 连通性**：只使用现有 `GitHubIssueAdapter` 的只读 GET，检查仓库访问和 base branch 是否存在。区分权限、404/not found、网络和配置错误。**不会**创建 Issue、改标签、发评论、推分支或建 PR。
+- **DSH**：只检查 CLI 文件/启动入口是否可解析；**不会**调用模型或执行代码。无法在不调用模型的情况下确认的能力标记为 `not_checked`。
+
+输出字段：`check`、`status`（`pass`/`fail`/`warning`/`not_checked`）、`message`；JSON 还包含 `read_only`、`status`、`exit_code`、`summary` 和 `limitations`。
+
+退出码：
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 没有阻断项。若存在 warning/not_checked，总体为 `ready_with_warnings`，这些项**不算通过**，需人工复核。 |
+| `2` | 至少一个 `fail` 阻断项；或参数组合非法（`--preflight --once`）。 |
+
+`--preflight` 与 `--once` 互斥，组合会以退出码 2 明确拒绝；`--json` 只允许与 `--preflight` 一起使用。
+
+预检**不能替代**真实端到端测试：只读请求不能证明 Contents/Issues/Pull-request 的写权限；不调用模型不能证明 DSH 模型凭证可用；不注册计划任务不能证明 Task Scheduler 登录触发可用。真实 DSH、GitHub 写入和 Windows 计划任务仍需单独、人工授权的冒烟测试。
+
 ## 9. 测试
 
 ```powershell
-cd D:\原子赛道\workspaces\autopilot-mvp
+cd D:\原子赛道\workspaces\autopilot-preflight
 python -m unittest discover -s autopilot/tests -t . -v
 ```
 
@@ -210,6 +245,7 @@ python -m unittest discover -s autopilot/tests -t . -v
 - 专用 CI job 会执行 `python -m unittest discover -s autopilot/tests -t . -v` 与 `python -m compileall -q autopilot`。
 - 旧占位 adapter 默认关闭；新 DSH runtime 只有显式启用才会启动真实进程。测试通过 fake DSH 子进程验证工作树隔离、超时/租约丢失终止、敏感路径拦截和审查 JSON 校验；GitHub runtime 只允许推送 `autopilot/*` 专用分支并创建 Draft PR，不包含 merge、auto-merge、默认分支推送或 upstream 推送路径；
 - 日志脱敏辅助函数。
+- Preflight 测试全部使用 fake GitHub/DSH 和 fake Git；覆盖缺配置、缺 DSH CLI、仓库无权限、base branch 不存在、网络错误、token 不出现在输出/异常、不调用正常 runner/不创建状态文件、`--preflight --once` 拒绝以及默认运行行为不变。
 
 ## 10. 日志与秘密
 
@@ -226,6 +262,7 @@ python -m unittest discover -s autopilot/tests -t . -v
 4. DSH 子进程支持超时/租约丢失时终止进程树；真实 Windows 进程树终止与本机 DSH 凭证链仍需现场验收。
 5. 单机 SQLite；跨机器并发不在范围内。
 6. 不包含 main 合并、auto-merge、总仓库推送路径；未来也必须保留王靖贻的人工授权门禁。
+7. 只读 preflight 无法证明 GitHub 写权限、DSH 模型凭证或 Windows Task Scheduler 注册成功；warning/not_checked 条目必须在真实冒烟测试前人工复核。
 
 ## 12. 证据边界
 

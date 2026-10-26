@@ -123,13 +123,28 @@ def _tracked_sensitive_paths(repo: Path, base_sha: str) -> list[str]:
     return [path for path in paths if _is_secret_path(path)]
 
 
-def _dsh_command(cli_path: str | None, args: Sequence[str]) -> list[str]:
+def resolve_dsh_cli(cli_path: str | None = None) -> str:
+    """Resolve the configured DSH launcher to an existing file, without running it."""
     executable = cli_path or os.environ.get("AUTOPILOT_DSH_CLI") or shutil.which("dsh")
     if not executable:
         raise DshRuntimeError(
             "DSH CLI not found; set AUTOPILOT_DSH_CLI to the installed dsh launcher"
         )
     path = Path(executable)
+    if not path.is_file():
+        raise DshRuntimeError(
+            "DSH CLI path does not exist or is not a file; set AUTOPILOT_DSH_CLI"
+        )
+    return str(path)
+
+
+def resolve_dsh_command(args: Sequence[str], cli_path: str | None = None) -> list[str]:
+    """Return the launcher argv used by the runtime, without starting it."""
+    return _dsh_command(cli_path, args)
+
+
+def _dsh_command(cli_path: str | None, args: Sequence[str]) -> list[str]:
+    path = Path(resolve_dsh_cli(cli_path))
     if path.suffix.lower() == ".py":
         return [sys.executable, str(path), *args]
     if os.name == "nt" and path.suffix.lower() in {".cmd", ".bat"}:

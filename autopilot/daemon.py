@@ -18,6 +18,7 @@ from pathlib import Path
 from .adapters.dsh_runtime import DshDiffReviewer, DshWorktreeExecutor
 from .adapters.github_runtime import GitHubIssueAdapter
 from .models import TaskStatus
+from .preflight import run_preflight
 from .redaction import redact
 from .scheduler import RunResult, Scheduler, SchedulerConfig
 from .store import SqliteStore
@@ -69,7 +70,44 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", default="data/autopilot.sqlite3", help="SQLite state database")
     parser.add_argument("--poll-interval", type=float, default=None, help="Override AUTOPILOT_POLL_SECONDS")
     parser.add_argument("--once", action="store_true", help="Process ready tasks once, then exit")
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Read-only environment preflight; does not claim, execute or publish tasks",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --preflight, print one JSON object instead of human-readable text",
+    )
     args = parser.parse_args(argv)
+
+    if args.preflight and args.once:
+        _emit({
+            "event": "preflight_blocked",
+            "reason": "--preflight cannot be combined with --once",
+        })
+        return 2
+    if args.json and not args.preflight:
+        _emit({
+            "event": "startup_blocked",
+            "reason": "--json is only supported with --preflight",
+        })
+        return 2
+    if args.preflight:
+        try:
+            report = run_preflight(Path(args.repo_root))
+            if args.json:
+                print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), flush=True)
+            else:
+                print(report.render_text(), flush=True)
+            return report.exit_code
+        except Exception as error:  # noqa: BLE001 - preflight must fail visibly
+            _emit({
+                "event": "preflight_failed",
+                "error": redact(f"{type(error).__name__}: {error}")[:2000],
+            })
+            return 2
 
     for name in ("AUTOPILOT_GITHUB_ENABLED", "AUTOPILOT_DSH_ENABLED", "AUTOPILOT_REVIEW_ENABLED"):
         if not _truthy(name):
