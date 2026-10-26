@@ -245,7 +245,7 @@ python -m unittest discover -s autopilot/tests -t . -v
 - 专用 CI job 会执行 `python -m unittest discover -s autopilot/tests -t . -v` 与 `python -m compileall -q autopilot`。
 - 旧占位 adapter 默认关闭；新 DSH runtime 只有显式启用才会启动真实进程。测试通过 fake DSH 子进程验证工作树隔离、超时/租约丢失终止、敏感路径拦截和审查 JSON 校验；GitHub runtime 只允许推送 `autopilot/*` 专用分支并创建 Draft PR，不包含 merge、auto-merge、默认分支推送或 upstream 推送路径；
 - 日志脱敏辅助函数。
-- Preflight 测试全部使用 fake GitHub/DSH 和 fake Git；覆盖缺配置、缺 DSH CLI、仓库无权限、base branch 不存在、网络错误、token 不出现在输出/异常、不调用正常 runner/不创建状态文件、`--preflight --once` 拒绝以及默认运行行为不变。
+- Preflight 的 GitHub/DSH 使用 fake，Git 部分另含真实临时仓库回归测试；覆盖缺配置、缺 DSH CLI、仓库无权限、base branch 不存在、网络错误、token 不出现在输出/异常、不调用正常 runner/不创建状态文件、`--preflight --once` 拒绝以及默认运行行为不变。
 
 ## 10. 日志与秘密
 

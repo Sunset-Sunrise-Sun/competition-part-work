@@ -326,7 +326,10 @@ class RealGitReadOnlyTest(unittest.TestCase):
             ".git/index was rewritten by the read-only preflight Git status check",
         )
         self.assertEqual(dict(os.environ), env_before)
-        self.assertNotIn("GIT_OPTIONAL_LOCKS", os.environ)
+        self.assertEqual(
+            os.environ.get("GIT_OPTIONAL_LOCKS"),
+            env_before.get("GIT_OPTIONAL_LOCKS"),
+        )
 
         by_name = checks(report)
         self.assertEqual(by_name["local.repo_root"].status, "pass")
