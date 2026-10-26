@@ -9,7 +9,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.error import URLError
 
-from autopilot.adapters.github_runtime import GitHubApiError, GitHubIssueAdapter, GitHubRuntimeError, _git
+from autopilot.adapters.github_runtime import (
+    GitHubApiError,
+    GitHubIssueAdapter,
+    GitHubRuntimeError,
+    _git,
+    _git_credential_fill,
+    resolve_github_token,
+)
 from autopilot.fakes import FakeExecutor, FakeReviewer, FakeTaskSource
 from autopilot.models import (
     ExecutionResult,
@@ -315,6 +322,121 @@ class GitHubIssueQueueTest(unittest.TestCase):
             with self.assertRaises(GitHubRuntimeError) as caught:
                 adapter._request("GET", "/issues")
         self.assertNotIn("test-token", str(caught.exception))
+
+
+class CredentialResolutionTest(unittest.TestCase):
+    def _result(self, *, code: int = 0, stdout: str = "", stderr: str = "") -> SimpleNamespace:
+        return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
+
+    def test_token_environment_priority(self) -> None:
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "env-primary", "GH_TOKEN": "env-secondary"}, clear=True):
+            with patch("autopilot.adapters.github_runtime.subprocess.run") as run:
+                self.assertEqual(resolve_github_token(), "env-primary")
+                run.assert_not_called()
+
+    def test_gh_token_when_github_token_absent(self) -> None:
+        with patch.dict(os.environ, {"GH_TOKEN": "env-secondary"}, clear=True):
+            with patch("autopilot.adapters.github_runtime.subprocess.run") as run:
+                self.assertEqual(resolve_github_token(), "env-secondary")
+                run.assert_not_called()
+
+    def test_authenticated_gh_cli_wins_before_helper(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("autopilot.adapters.github_runtime.shutil.which", return_value="C:/fake/gh.exe"):
+                with patch(
+                    "autopilot.adapters.github_runtime.subprocess.run",
+                    return_value=self._result(stdout="gh-token\n"),
+                ) as run:
+                    self.assertEqual(resolve_github_token(), "gh-token")
+        command = run.call_args.args[0]
+        self.assertEqual(command[1:], ["auth", "token", "--hostname", "github.com"])
+
+    def test_gh_absent_falls_back_to_fixed_github_helper(self) -> None:
+        helper_stdout = (
+            "protocol=https\nhost=github.com\nusername=git-user\n"
+            "password=helper-token\n\n"
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("autopilot.adapters.github_runtime.shutil.which", return_value=None):
+                with patch(
+                    "autopilot.adapters.github_runtime.subprocess.run",
+                    return_value=self._result(stdout=helper_stdout),
+                ) as run:
+                    self.assertEqual(resolve_github_token(), "helper-token")
+        command = run.call_args.args[0]
+        self.assertEqual(command[1:], ["credential", "fill"])
+        self.assertEqual(run.call_args.kwargs["input"], "protocol=https\nhost=github.com\n\n")
+        child_env = run.call_args.kwargs["env"]
+        self.assertEqual(child_env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(child_env["GCM_INTERACTIVE"], "Never")
+
+    def test_helper_failures_return_empty_without_raising(self) -> None:
+        cases = [
+            self._result(code=1),
+            self._result(stdout="protocol=https\nhost=github.com\nusername=x\n"),
+            self._result(stdout="not credential output"),
+            self._result(stdout="password=\n"),
+        ]
+        for result in cases:
+            with self.subTest(result=result):
+                with patch.dict(os.environ, {}, clear=True):
+                    with patch("autopilot.adapters.github_runtime.shutil.which", return_value=None):
+                        with patch(
+                            "autopilot.adapters.github_runtime.subprocess.run",
+                            return_value=result,
+                        ):
+                            self.assertEqual(resolve_github_token(), "")
+        for error in (subprocess.TimeoutExpired("git", 1), OSError("git unavailable")):
+            with self.subTest(error=error):
+                with patch.dict(os.environ, {}, clear=True):
+                    with patch("autopilot.adapters.github_runtime.shutil.which", return_value=None):
+                        with patch(
+                            "autopilot.adapters.github_runtime.subprocess.run",
+                            side_effect=error,
+                        ):
+                            self.assertEqual(resolve_github_token(), "")
+
+    def test_helper_never_calls_approve_or_reject_and_never_prints_token(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("autopilot.adapters.github_runtime.shutil.which", return_value=None):
+                with patch(
+                    "autopilot.adapters.github_runtime.subprocess.run",
+                    return_value=self._result(stdout="protocol=https\nhost=github.com\npassword=secret-token\n"),
+                ) as run:
+                    self.assertEqual(resolve_github_token(), "secret-token")
+        command = run.call_args.args[0]
+        self.assertEqual(command[1:], ["credential", "fill"])
+        self.assertNotIn("approve", command)
+        self.assertNotIn("reject", command)
+
+    def test_from_env_uses_shared_resolver_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+            env = {
+                "AUTOPILOT_GITHUB_ENABLED": "1",
+                "AUTOPILOT_GITHUB_REPOSITORY": "acme/repo",
+                "AUTOPILOT_GITHUB_BASE_BRANCH": "develop",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                with patch(
+                    "autopilot.adapters.github_runtime.resolve_github_token",
+                    return_value="helper-token",
+                ) as resolver:
+                    adapter = GitHubIssueAdapter.from_env(root)
+            self.assertEqual(adapter.token, "helper-token")
+            resolver.assert_called_once()
+
+    def test_git_credential_fill_is_host_fixed_and_read_only(self) -> None:
+        with patch(
+            "autopilot.adapters.github_runtime.subprocess.run",
+            return_value=self._result(stdout="protocol=https\nhost=github.com\npassword=token\n"),
+        ) as run:
+            self.assertEqual(_git_credential_fill(), "token")
+        command = run.call_args.args[0]
+        self.assertEqual(command[1:], ["credential", "fill"])
+        self.assertIn("host=github.com", run.call_args.kwargs["input"])
+        self.assertNotIn("host=", run.call_args.kwargs["input"].replace("host=github.com", ""))
 
 
 class PublisherGateTest(unittest.TestCase):

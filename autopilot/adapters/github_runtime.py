@@ -59,31 +59,70 @@ def _safe_branch(task_id: str) -> str:
     return f"autopilot/{slug}"
 
 
+def _git_credential_fill(timeout: float = 10.0) -> str:
+    """Read github.com credentials through git's read-only credential API.
+
+    The helper is queried for the fixed host only. Nothing from its
+    stdout/stderr is logged, and failures collapse to an empty token.
+    """
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    try:
+        result = subprocess.run(
+            [_GIT_EXECUTABLE, "credential", "fill"],
+            input="protocol=https\nhost=github.com\n\n",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    password = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("password="):
+            password = line.split("=", 1)[1]
+            break
+    return password.strip()
+
+
 def resolve_github_token() -> str:
-    """Resolve the existing GitHub credential without logging its value."""
+    """Resolve the existing GitHub credential without logging its value.
+
+    Precedence: GITHUB_TOKEN, GH_TOKEN, authenticated gh CLI, then the local
+    Git Credential Helper for the fixed https://github.com host.
+    """
     token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
     if token:
         return token
     gh_cli = shutil.which("gh")
-    if not gh_cli:
-        return ""
-    try:
-        result = subprocess.run(
-            [gh_cli, "auth", "token", "--hostname", "github.com"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-            check=False,
-        )
-    except OSError:
-        return ""
-    if result.returncode != 0:
-        return ""
-    return result.stdout.strip()
+    if gh_cli:
+        try:
+            result = subprocess.run(
+                [gh_cli, "auth", "token", "--hostname", "github.com"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+            )
+        except OSError:
+            result = None
+        if result is not None and result.returncode == 0:
+            token = result.stdout.strip()
+            if token:
+                return token
+    return _git_credential_fill()
 
 
 def _git(repo_root: Path, *args: str, token: str | None = None, timeout: float = 60.0) -> str:

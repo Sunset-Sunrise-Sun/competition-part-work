@@ -235,6 +235,28 @@ class PreflightChecksTest(unittest.TestCase):
             report = run_fake(self.root)
         self.assertEqual(report.exit_code, 0)
 
+    def test_preflight_reuses_shared_github_token_resolver_path(self) -> None:
+        seen = {}
+
+        def probe(root, repository, base_branch, token):
+            seen["token"] = token
+            return GitHubProbeResult(repository_accessible=True, base_branch_exists=True)
+
+        with patch(
+            "autopilot.preflight.resolve_github_token",
+            return_value="helper-token",
+        ) as resolver:
+            report = run_fake(
+                self.root,
+                token_resolver=None,
+                github_probe=probe,
+            )
+        by_name = checks(report)
+        resolver.assert_called_once()
+        self.assertEqual(seen.get("token"), "helper-token")
+        self.assertEqual(by_name["github.credentials"].status, "pass")
+        self.assertEqual(by_name["github.repository_access"].status, "pass")
+
     def test_repository_root_mismatch_is_a_failure(self) -> None:
         def wrong_root(root: Path, *args: str) -> str:
             if args[:2] == ("rev-parse", "--show-toplevel"):

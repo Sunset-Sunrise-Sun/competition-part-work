@@ -124,7 +124,7 @@ Runtime adapter 状态：
 | `review_timeout_seconds` | 60 | 审查超时 |
 | `max_steps_per_run` | 50 | 单次 `run_until_idle` 上限，防止无限循环 |
 
-测试不会读取真实 GitHub/DSH 凭证；运行时通过环境变量或已登录的 GitHub CLI 取得发布凭证，不在仓库中创建 `.env`。
+测试不会读取真实 GitHub/DSH 凭证；运行时按 `GITHUB_TOKEN`、`GH_TOKEN`、已登录的 GitHub CLI、固定 `github.com` 的 Git Credential Helper（只读 `git credential fill`）顺序取得发布凭证；不在仓库中创建 `.env`，不记录凭证值。
 
 ## 7. 启动 / 停止
 
@@ -155,7 +155,7 @@ $env:AUTOPILOT_REVIEW_ENABLED = "1"
 $env:AUTOPILOT_GITHUB_REPOSITORY = "OWNER/REPOSITORY"
 $env:AUTOPILOT_GITHUB_BASE_BRANCH = "YOUR_WORKING_BRANCH"
 
-# 优先使用已登录的 GitHub CLI 凭证；也可通过 GITHUB_TOKEN / GH_TOKEN 提供细粒度 Token。
+# 优先使用 GITHUB_TOKEN / GH_TOKEN，其次已登录的 GitHub CLI；最后回退到固定 github.com 的 Git Credential Helper（非交互只读 fill）。
 gh auth login
 
 # 先跑一次，不安装常驻任务
@@ -252,7 +252,7 @@ python -m unittest discover -s autopilot/tests -t . -v
 - 调度器只记录 task id、状态、head SHA、错误类型；不会记录环境变量值、token、cookie；
 - `redaction.redact()` 对常见 API-key/token 环境变量赋值、Bearer/Basic 授权头、URL 内嵌凭证、常见原始 token 格式及 `X-Hub-Signature-256` 做掩码；
 - 测试使用 `dummy-test-only` 字符串，仅验证“adapter 不执行真实动作”，不是真实凭证；
-- 仓库不创建 `.env`；GitHub runtime 可从已认证的 `gh auth token` 读取发布凭证，或从 `GITHUB_TOKEN` / `GH_TOKEN` 环境变量读取。凭证只在运行时进程内使用，不写入仓库文件；DSH 自身的 profile/凭证目录仍需按独立操作系统账户与权限隔离。
+- 仓库不创建 `.env`；GitHub runtime 按 `GITHUB_TOKEN`、`GH_TOKEN`、已认证 `gh` CLI、固定 `github.com` 的 Git Credential Helper（`git credential fill`，非交互、超时、只读，不输出 helper stdout）顺序解析凭据。凭证只在运行时进程内使用，不写入仓库文件；DSH 子进程环境仍会剥离 GitHub/SSH 等无关秘密。
 
 ## 11. 已知限制
 
