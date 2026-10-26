@@ -151,6 +151,17 @@ def _git_executable() -> str:
     return shutil.which("git") or "git"
 
 
+def _preflight_git_env() -> dict[str, str]:
+    """Copy the parent environment and disable Git's optional index locks.
+
+    ``git status`` may otherwise refresh and write back the index stat cache.
+    The parent process environment is never mutated.
+    """
+    env = os.environ.copy()
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return env
+
+
 def _default_git_runner(repo_root: Path, *args: str) -> str:
     result = subprocess.run(
         [_git_executable(), "-C", str(repo_root), *args],
@@ -162,6 +173,7 @@ def _default_git_runner(repo_root: Path, *args: str) -> str:
         errors="replace",
         timeout=20,
         check=False,
+        env=_preflight_git_env(),
     )
     if result.returncode:
         raise RuntimeError(redact(result.stderr.strip())[-500:])
@@ -179,6 +191,7 @@ def _default_git_version() -> str:
         errors="replace",
         timeout=20,
         check=False,
+        env=_preflight_git_env(),
     )
     if result.returncode:
         return ""

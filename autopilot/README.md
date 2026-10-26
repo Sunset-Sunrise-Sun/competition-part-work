@@ -207,7 +207,7 @@ python -m autopilot.daemon --repo-root . --preflight --json
 检查范围：
 
 - **配置**：`AUTOPILOT_GITHUB_ENABLED`、`AUTOPILOT_DSH_ENABLED`、`AUTOPILOT_REVIEW_ENABLED` 是否显式启用；GitHub `owner/name`、base branch 是否有效；GitHub 凭据是否可取得（不输出值）；DSH CLI 是否可解析。
-- **本地环境**：`--repo-root` 是否为 Git 根目录；Python（>=3.11）、Git、DSH 入口（含 Windows `.cmd`/`.bat`→`cmd.exe`）是否满足；工作区状态、本地 base branch 是否存在（无法确认时标 warning，而不是假装通过）。
+- **本地环境**：`--repo-root` 是否为 Git 根目录；Python（>=3.11）、Git、DSH 入口（含 Windows `.cmd`/`.bat`→`cmd.exe`）是否满足；工作区状态、本地 base branch 是否存在（无法确认时标 warning，而不是假装通过）。Preflight 的 Git 子进程使用独立环境并设置 `GIT_OPTIONAL_LOCKS=0`，避免 `git status` 刷新写回 `.git/index`；父进程环境不被修改。
 - **GitHub 连通性**：只使用现有 `GitHubIssueAdapter` 的只读 GET，检查仓库访问和 base branch 是否存在。区分权限、404/not found、网络和配置错误。**不会**创建 Issue、改标签、发评论、推分支或建 PR。
 - **DSH**：只检查 CLI 文件/启动入口是否可解析；**不会**调用模型或执行代码。无法在不调用模型的情况下确认的能力标记为 `not_checked`。
 

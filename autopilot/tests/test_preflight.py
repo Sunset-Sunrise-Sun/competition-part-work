@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -242,6 +245,93 @@ class PreflightChecksTest(unittest.TestCase):
         by_name = checks(report)
         self.assertEqual(by_name["local.repo_root"].status, "fail")
         self.assertEqual(by_name["github.repository_access"].status, "not_checked")
+
+
+class RealGitReadOnlyTest(unittest.TestCase):
+    """Real-index regression: preflight status must not refresh/write .git/index."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.git = shutil.which("git") or "git"
+        self._git("init")
+        self._git("config", "user.email", "preflight-test@example.invalid")
+        self._git("config", "user.name", "Preflight Test")
+        self.tracked = self.repo / "tracked.txt"
+        self.tracked.write_text("one\n", encoding="utf-8")
+        self._git("add", "tracked.txt")
+        self._git("commit", "-m", "init")
+
+    def _git(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [self.git, "-C", str(self.repo), *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
+
+    def _index_hash(self) -> str:
+        return hashlib.sha256((self.repo / ".git" / "index").read_bytes()).hexdigest()
+
+    def _make_mtime_mismatch(self, seconds: float) -> None:
+        stat = self.tracked.stat()
+        os.utime(
+            self.tracked,
+            (stat.st_atime + seconds, stat.st_mtime + seconds),
+        )
+
+    def test_preflight_status_preserves_index_and_still_reports_dirty_workspace(self) -> None:
+        index_path = self.repo / ".git" / "index"
+        original_index = index_path.read_bytes()
+        before_control = self._index_hash()
+
+        # Control: prove this Git version would refresh the index on a
+        # timestamp-only mismatch when optional locks are not disabled.
+        self._make_mtime_mismatch(10)
+        control = self._git("status", "--porcelain")
+        self.assertEqual(control.returncode, 0, control.stderr)
+        if self._index_hash() == before_control:
+            self.skipTest(
+                "This Git version did not rewrite .git/index for a timestamp-only "
+                "mismatch; cannot prove the optional-lock regression on this host."
+            )
+
+        # Restore the original index, then make a real dirty workspace state.
+        index_path.write_bytes(original_index)
+        self.tracked.write_text("two\n", encoding="utf-8")
+        self._make_mtime_mismatch(20)
+        before_preflight = self._index_hash()
+        env_before = dict(os.environ)
+
+        report = run_preflight(
+            self.repo,
+            env={},
+            token_resolver=lambda: "",
+            github_probe=Mock(side_effect=AssertionError("GitHub must not be called")),
+            dsh_resolver=fake_dsh,
+        )
+
+        after_preflight = self._index_hash()
+        self.assertEqual(
+            before_preflight,
+            after_preflight,
+            ".git/index was rewritten by the read-only preflight Git status check",
+        )
+        self.assertEqual(dict(os.environ), env_before)
+        self.assertNotIn("GIT_OPTIONAL_LOCKS", os.environ)
+
+        by_name = checks(report)
+        self.assertEqual(by_name["local.repo_root"].status, "pass")
+        self.assertEqual(by_name["local.workspace_state"].status, "warning")
+        self.assertIn("changed/untracked", by_name["local.workspace_state"].message)
 
 
 class DaemonPreflightIsolationTest(unittest.TestCase):
